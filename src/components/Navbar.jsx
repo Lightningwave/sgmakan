@@ -10,7 +10,7 @@ function Navbar({ toggleSidebar }) {
                 </button>
                 <div className="navbar-logo">
                     <Link to="/" className="navbar-brand">
-                        <img src="/logo-sgmakan.png" alt="SGMakan" className="navbar-logo-img" />
+                        <img src={`${process.env.PUBLIC_URL}/logo-sgmakan.png`} alt="SGMakan" className="navbar-logo-img" />
                     </Link>
                 </div>
             </div>
