@@ -1,25 +1,35 @@
 import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
+import { useAuth } from '../hooks/useAuth';
 
 function Login() {
+    const navigate = useNavigate();
+    const { login, isAuthenticated } = useAuth();
     const [formData, setFormData] = useState({
         email: '',
         password: ''
     });
     const [error, setError] = useState('');
+    const [isLoading, setIsLoading] = useState(false);
+
+    // Redirect if already logged in
+    React.useEffect(() => {
+        if (isAuthenticated) {
+            navigate('/');
+        }
+    }, [isAuthenticated, navigate]);
 
     const handleChange = (e) => {
         setFormData({
             ...formData,
             [e.target.name]: e.target.value
         });
-        setError(''); // Clear error when user types
+        setError('');
     };
 
-    const handleSubmit = (e) => {
+    const handleSubmit = async (e) => {
         e.preventDefault();
 
-        // Basic validation
         if (!formData.email || !formData.password) {
             setError('Please fill in all fields');
             return;
@@ -30,16 +40,17 @@ function Login() {
             return;
         }
 
-        // TODO: Replace with actual authentication API call
-        console.log('Login attempt:', formData.email);
+        setIsLoading(true);
+        setError('');
 
-        // Mock success - for now just navigate to home
-        // In production, this will:
-        // 1. Call backend API
-        // 2. Store auth token
-        // 3. Redirect to dashboard
-        alert('Login functionality will be connected to backend soon!');
-        // navigate('/');
+        try {
+            await login(formData.email, formData.password);
+            navigate('/');
+        } catch (err) {
+            setError(err.message || 'Login failed. Please try again.');
+        } finally {
+            setIsLoading(false);
+        }
     };
 
     return (
@@ -63,6 +74,7 @@ function Login() {
                             onChange={handleChange}
                             placeholder="your@email.com"
                             autoComplete="email"
+                            disabled={isLoading}
                         />
                     </div>
 
@@ -76,27 +88,14 @@ function Login() {
                             onChange={handleChange}
                             placeholder="••••••••"
                             autoComplete="current-password"
+                            disabled={isLoading}
                         />
                     </div>
 
-                    <div className="form-footer">
-                        <Link to="/forgot-password" className="forgot-link">
-                            Forgot password?
-                        </Link>
-                    </div>
-
-                    <button type="submit" className="auth-button">
-                        Log In
+                    <button type="submit" className="auth-button" disabled={isLoading}>
+                        {isLoading ? 'Logging in...' : 'Log In'}
                     </button>
                 </form>
-
-                <div className="auth-divider">
-                    <span>or</span>
-                </div>
-
-                <button className="auth-button-secondary" disabled>
-                    Continue with Google (Coming Soon)
-                </button>
 
                 <div className="auth-switch">
                     Don't have an account? <Link to="/signup">Sign up</Link>

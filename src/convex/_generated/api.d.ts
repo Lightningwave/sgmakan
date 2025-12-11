@@ -8,6 +8,7 @@
  * @module
  */
 
+import type * as auth from "../auth.js";
 import type * as cafes from "../cafes.js";
 import type * as neighborhoods from "../neighborhoods.js";
 
@@ -18,6 +19,7 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  auth: typeof auth;
   cafes: typeof cafes;
   neighborhoods: typeof neighborhoods;
 }>;

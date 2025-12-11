@@ -1,25 +1,34 @@
 import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
+import { useAuth } from '../hooks/useAuth';
 
 function Signup() {
+    const navigate = useNavigate();
+    const { signup, isAuthenticated } = useAuth();
     const [formData, setFormData] = useState({
         email: '',
         password: '',
         confirmPassword: '',
-        agreeToTerms: false
     });
     const [errors, setErrors] = useState({});
+    const [isLoading, setIsLoading] = useState(false);
+
+    // Redirect if already logged in
+    React.useEffect(() => {
+        if (isAuthenticated) {
+            navigate('/');
+        }
+    }, [isAuthenticated, navigate]);
 
     const handleChange = (e) => {
-        const value = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
         setFormData({
             ...formData,
-            [e.target.name]: value
+            [e.target.name]: e.target.value
         });
-        // Clear error for this field
         setErrors({
             ...errors,
-            [e.target.name]: ''
+            [e.target.name]: '',
+            general: ''
         });
     };
 
@@ -42,27 +51,27 @@ function Signup() {
             newErrors.confirmPassword = 'Passwords do not match';
         }
 
-        if (!formData.agreeToTerms) {
-            newErrors.agreeToTerms = 'You must agree to the terms';
-        }
-
         setErrors(newErrors);
         return Object.keys(newErrors).length === 0;
     };
 
-    const handleSubmit = (e) => {
+    const handleSubmit = async (e) => {
         e.preventDefault();
 
         if (!validateForm()) {
             return;
         }
 
-        // TODO: Replace with actual registration API call
-        console.log('Signup attempt:', formData.email);
+        setIsLoading(true);
 
-        // Mock success
-        alert('Signup functionality will be connected to backend soon!');
-        // navigate('/login');
+        try {
+            await signup(formData.email, formData.password);
+            navigate('/');
+        } catch (err) {
+            setErrors({ general: err.message || 'Signup failed. Please try again.' });
+        } finally {
+            setIsLoading(false);
+        }
     };
 
     return (
@@ -74,6 +83,8 @@ function Signup() {
                 </div>
 
                 <form className="auth-form" onSubmit={handleSubmit}>
+                    {errors.general && <div className="auth-error">{errors.general}</div>}
+
                     <div className="form-group">
                         <label htmlFor="email">Email</label>
                         <input
@@ -84,6 +95,7 @@ function Signup() {
                             onChange={handleChange}
                             placeholder="your@email.com"
                             autoComplete="email"
+                            disabled={isLoading}
                         />
                         {errors.email && <span className="field-error">{errors.email}</span>}
                     </div>
@@ -98,6 +110,7 @@ function Signup() {
                             onChange={handleChange}
                             placeholder="At least 6 characters"
                             autoComplete="new-password"
+                            disabled={isLoading}
                         />
                         {errors.password && <span className="field-error">{errors.password}</span>}
                     </div>
@@ -112,36 +125,15 @@ function Signup() {
                             onChange={handleChange}
                             placeholder="Re-enter password"
                             autoComplete="new-password"
+                            disabled={isLoading}
                         />
                         {errors.confirmPassword && <span className="field-error">{errors.confirmPassword}</span>}
                     </div>
 
-                    <div className="form-group-checkbox">
-                        <input
-                            type="checkbox"
-                            id="agreeToTerms"
-                            name="agreeToTerms"
-                            checked={formData.agreeToTerms}
-                            onChange={handleChange}
-                        />
-                        <label htmlFor="agreeToTerms">
-                            I agree to the <Link to="/terms">Terms of Service</Link> and <Link to="/privacy">Privacy Policy</Link>
-                        </label>
-                    </div>
-                    {errors.agreeToTerms && <span className="field-error">{errors.agreeToTerms}</span>}
-
-                    <button type="submit" className="auth-button">
-                        Create Account
+                    <button type="submit" className="auth-button" disabled={isLoading}>
+                        {isLoading ? 'Creating Account...' : 'Create Account'}
                     </button>
                 </form>
-
-                <div className="auth-divider">
-                    <span>or</span>
-                </div>
-
-                <button className="auth-button-secondary" disabled>
-                    Sign up with Google (Coming Soon)
-                </button>
 
                 <div className="auth-switch">
                     Already have an account? <Link to="/login">Log in</Link>

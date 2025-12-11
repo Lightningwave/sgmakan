@@ -25,5 +25,18 @@ export default defineSchema({
     description: v.optional(v.string()),
     createdAt: v.optional(v.number()),
   }).index("by_neighborhood_id", ["id"]),
-});
 
+  users: defineTable({
+    email: v.string(),
+    passwordHash: v.string(),
+    name: v.optional(v.string()),
+    createdAt: v.number(),
+  }).index("by_email", ["email"]),
+
+  sessions: defineTable({
+    userId: v.id("users"),
+    token: v.string(),
+    expiresAt: v.number(),
+    createdAt: v.number(),
+  }).index("by_token", ["token"]),
+});
