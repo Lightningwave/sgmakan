@@ -1,10 +1,11 @@
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import neighborhoods from '../data/neighborhoods';
+import { useBackendData } from '../hooks/useBackendData';
 
 function Sidebar({ isOpen, closeSidebar }) {
     const location = useLocation();
     const currentPath = location.pathname + location.search;
+    const { neighborhoods, isLoading } = useBackendData();
 
     const isActive = (path) => {
         return currentPath === path ? 'active' : '';
@@ -51,17 +52,21 @@ function Sidebar({ isOpen, closeSidebar }) {
                             <span className="icon">📂</span> All Cafes
                         </Link>
                     </li>
-                    {neighborhoods.map((neighborhood) => (
-                        <li key={neighborhood.id}>
-                            <Link 
-                                to={`/explore?area=${neighborhood.id}`} 
-                                className={`sidebar-link ${isActive(`/explore?area=${neighborhood.id}`)}`}
-                                onClick={closeSidebar}
-                            >
-                                <span className="icon">{neighborhood.icon}</span> {neighborhood.name}
-                            </Link>
-                        </li>
-                    ))}
+                    {isLoading ? (
+                        <li className="sidebar-link">Loading areas...</li>
+                    ) : (
+                        neighborhoods.map((neighborhood) => (
+                            <li key={neighborhood.id}>
+                                <Link 
+                                    to={`/explore?area=${neighborhood.id}`} 
+                                    className={`sidebar-link ${isActive(`/explore?area=${neighborhood.id}`)}`}
+                                    onClick={closeSidebar}
+                                >
+                                    <span className="icon">{neighborhood.icon}</span> {neighborhood.name}
+                                </Link>
+                            </li>
+                        ))
+                    )}
                 </ul>
             </div>
         </aside>

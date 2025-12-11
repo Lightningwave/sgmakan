@@ -1,15 +1,19 @@
 import React, { useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import cafes from '../data/cafes';
 import useCafeStatus from '../hooks/useCafeStatus';
+import { useCafeById } from '../hooks/useBackendData';
 
 function PlaceDetails() {
     const { id } = useParams();
-    const cafe = cafes.find(c => c.id === id);
+    const { cafe, isLoading } = useCafeById(id);
     const { getCafeStatus, updateCafeStatus, getCafeNote, updateCafeNote } = useCafeStatus();
     
     // Local state for "unsaved" changes effect
     const [isSaved, setIsSaved] = useState(true);
+
+    if (isLoading) {
+        return <div className="place-details-error">Loading place...</div>;
+    }
 
     if (!cafe) {
         return <div className="place-details-error">Place not found</div>;

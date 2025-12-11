@@ -2,17 +2,27 @@ import React from 'react';
 import Card from '../components/Card';
 import Hero from '../components/Hero';
 import EmptyState from '../components/EmptyState';
-import cafes from '../data/cafes';
+import { useBackendData } from '../hooks/useBackendData';
 import useCafeStatus from '../hooks/useCafeStatus';
 import { Link } from 'react-router-dom';
 
 function Home() {
     const { getAllCafesWithStatus } = useCafeStatus();
+    const { cafes, isLoading } = useBackendData();
 
     // Get all cafes with user's custom statuses, then select first 3
     const cafesWithStatus = getAllCafesWithStatus(cafes);
     const featuredCafes = cafesWithStatus.slice(0, 3);
     const recentCafes = cafesWithStatus.slice(3, 6); // Just simulating recent for now
+
+    if (isLoading) {
+        return (
+            <div className="home-page">
+                <Hero />
+                <EmptyState icon="⏳" title="Loading cafes" message="Fetching the latest picks..." />
+            </div>
+        );
+    }
 
     return (
         <div className="home-page">

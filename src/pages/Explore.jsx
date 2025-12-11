@@ -2,8 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
 import Card from '../components/Card';
 import EmptyState from '../components/EmptyState';
-import cafes from '../data/cafes';
-import neighborhoods from '../data/neighborhoods';
+import { useBackendData } from '../hooks/useBackendData';
 import useCafeStatus from '../hooks/useCafeStatus';
 
 function Explore() {
@@ -12,6 +11,7 @@ function Explore() {
     const area = queryParams.get('area');
     const statusParam = queryParams.get('status');
     const { getAllCafesWithStatus, updateCafeStatus } = useCafeStatus();
+    const { cafes, neighborhoods, isLoading } = useBackendData();
 
     // Get cafes with user's custom statuses
     const cafesWithStatus = getAllCafesWithStatus(cafes);
@@ -36,6 +36,15 @@ function Explore() {
             setStatusFilter('all');
         }
     }, [statusParam]);
+
+    if (isLoading) {
+        return (
+            <div className="explore-page">
+                <h1>All Cafes</h1>
+                <EmptyState icon="⏳" title="Loading cafes" message="Fetching your curated list..." />
+            </div>
+        );
+    }
 
     // Filter by area first, then by status and search query
     const displayedCafes = filteredCafes.filter(cafe => {
