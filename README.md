@@ -18,14 +18,13 @@ This is also an experimental project to learn and work with [Convex](https://www
 ## Tech Stack
 
 - React
-- Convex (experimental)
+- Convex
 
 ## Getting Started
 
 ### Prerequisites
 
 - Node.js and npm installed
-- A Convex project (run `npm run convex:dev` to create one locally)
 
 ### Installation
 
@@ -40,32 +39,24 @@ cd sgmakan
 npm install
 ```
 
-3. Configure Convex
-- Start Convex dev server (and generate API files): `npm run convex:dev`
-- Copy the Convex URL into `.env.local`:
+3. Start Convex dev server (keeps functions synced)
 ```bash
-echo "REACT_APP_CONVEX_URL=https://<your-convex>.convex.cloud" > .env.local
+npm run convex:dev
 ```
 
-4. Seed backend data (cafes + neighborhoods)
-```bash
-npm run convex:seed
-```
-
-5. Start the development server
+4. In another terminal, start the React app
 ```bash
 npm start
 ```
 
-Runs the app in development mode. Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
 
 ## Available Scripts
 
 - `npm start` - Runs the app in development mode
 - `npm test` - Launches the test runner
 - `npm run build` - Builds the app for production
-- `npm run convex:dev` - Starts Convex dev server and generates API bindings
-- `npm run convex:seed` - Seeds Convex with cafes and neighborhoods
+- `npm run convex:dev` - Starts Convex dev server
 
 ## License
 

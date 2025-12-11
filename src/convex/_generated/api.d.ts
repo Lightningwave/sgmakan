@@ -10,8 +10,6 @@
 
 import type * as cafes from "../cafes.js";
 import type * as neighborhoods from "../neighborhoods.js";
-import type * as seed from "../seed.js";
-import type * as seedData from "../seedData.js";
 
 import type {
   ApiFromModules,
@@ -22,8 +20,6 @@ import type {
 declare const fullApi: ApiFromModules<{
   cafes: typeof cafes;
   neighborhoods: typeof neighborhoods;
-  seed: typeof seed;
-  seedData: typeof seedData;
 }>;
 
 /**
