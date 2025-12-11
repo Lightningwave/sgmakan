@@ -30,7 +30,7 @@ This is also an experimental project to learn and work with [Convex](https://www
 
 1. Clone the repository
 ```bash
-git clone https://github.com/YOUR_USERNAME/sgmakan.git
+git clone https://github.com/Lightningwave/sgmakan
 cd sgmakan
 ```
 
