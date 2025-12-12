@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import Card from '../components/Card';
 import EmptyState from '../components/EmptyState';
 import { useBackendData } from '../hooks/useBackendData';
@@ -7,6 +7,7 @@ import useCafeStatus from '../hooks/useCafeStatus';
 
 function Explore() {
     const location = useLocation();
+    const navigate = useNavigate();
     const queryParams = new URLSearchParams(location.search);
     const area = queryParams.get('area');
     const statusParam = queryParams.get('status');
@@ -81,7 +82,7 @@ function Explore() {
 
         const randomCafe = pool[Math.floor(Math.random() * pool.length)];
         // Navigate to the cafe
-        window.location.href = `/place/${randomCafe.id}`;
+        navigate(`/place/${randomCafe.id}`);
     };
 
     return (
@@ -196,7 +197,7 @@ function Explore() {
                         <tbody>
                             {displayedCafes.length > 0 ? (
                                 displayedCafes.map((cafe) => (
-                                    <tr key={cafe.id} onClick={() => window.location.href = `/place/${cafe.id}`} className="table-row">
+                                    <tr key={cafe.id} onClick={() => navigate(`/place/${cafe.id}`)} className="table-row">
                                         <td className="cell-name">
                                             <span className="icon">📄</span> {cafe.title}
                                         </td>
