@@ -1,13 +1,13 @@
 {
   "files": {
     "main.css": "/sgmakan/static/css/main.50b4a013.css",
-    "main.js": "/sgmakan/static/js/main.6209f073.js",
+    "main.js": "/sgmakan/static/js/main.24f9edbf.js",
     "index.html": "/sgmakan/index.html",
     "main.50b4a013.css.map": "/sgmakan/static/css/main.50b4a013.css.map",
-    "main.6209f073.js.map": "/sgmakan/static/js/main.6209f073.js.map"
+    "main.24f9edbf.js.map": "/sgmakan/static/js/main.24f9edbf.js.map"
   },
   "entrypoints": [
     "static/css/main.50b4a013.css",
-    "static/js/main.6209f073.js"
+    "static/js/main.24f9edbf.js"
   ]
 }
