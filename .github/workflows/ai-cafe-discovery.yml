@@ -1,0 +1,40 @@
+name: AI Cafe Discovery
+
+on:
+  # Run weekly every Monday at 2 AM Singapore time (Sunday 6 PM UTC)
+  schedule:
+    - cron: '0 18 * * 0'
+  
+  # Allow manual trigger from GitHub Actions tab
+  workflow_dispatch:
+
+jobs:
+  discover-cafes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run Cafe Discovery Pipeline
+        run: node src/scripts/cafe-curator.js
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          SERPER_API_KEY: ${{ secrets.SERPER_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          OPENROUTER_MODEL: ${{ vars.OPENROUTER_MODEL || 'qwen/qwen3-next-80b-a3b-instruct:free' }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GROQ_MODEL: ${{ vars.GROQ_MODEL || 'llama-3.3-70b-versatile' }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-2.0-flash-lite' }}
