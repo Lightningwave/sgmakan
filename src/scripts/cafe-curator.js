@@ -111,23 +111,33 @@ const SEARCH_INTENTS = [
 ];
 
 // ─── Full Singapore neighborhood list (matching schema) ────────────────────────
+// NOTE: Order matters — keyword matching stops at first match.
+//       More specific neighborhoods (e.g. Keong Saik) should come before broader ones.
 const NEIGHBORHOOD_KEYWORDS = {
-    'Tiong Bahru':     ['tiong bahru'],
-    'Joo Chiat':       ['joo chiat', 'katong', 'east coast rd', 'e coast rd', 'still rd', 'dunman'],
+    'Tiong Bahru':     ['tiong bahru', 'seng poh', 'yong siak'],
+    'Joo Chiat':       ['joo chiat', 'katong', 'east coast rd', 'e coast rd', 'still rd', 'dunman', 'tanjong katong'],
     'Dempsey Hill':    ['dempsey'],
-    'Telok Ayer':      ['telok ayer', 'amoy st', 'cecil st'],
-    'Keong Saik':      ['keong saik', 'chinatown', 'neil road'],
-    'Holland Village':  ['holland village', 'holland v', 'chip bee'],
-    'Jalan Besar':     ['jalan besar', 'lavender', 'tyrwhitt'],
+    'Telok Ayer':      ['telok ayer', 'amoy st', 'amoy street', 'cecil st', 'club st', 'club street', 'ann siang', 'boon tat'],
+    'Keong Saik':      ['keong saik', 'chinatown', 'neil road', 'neil rd', 'pagoda st', 'pagoda street',
+                        'temple st', 'temple street', 'trengganu', 'smith st', 'kreta ayer', 'sago st',
+                        'sago lane', 'banda st', 'jiak chuan', 'craig rd', 'craig road', 'eu tong sen'],
+    'Everton Park':    ['everton park', 'everton rd', 'everton prk'],
+    'Holland Village':  ['holland village', 'holland v', 'chip bee', 'holland ave', 'holland dr'],
+    'Jalan Besar':     ['jalan besar', 'lavender', 'tyrwhitt', 'french rd', 'french road',
+                        'kitchener', 'hamilton rd', 'hamilton road', 'syed alwi'],
     'Siglap':          ['siglap', 'frankel', 'upper east coast'],
-    'Bras Basah':      ['bras basah', 'bugis', 'bencoolen', 'victoria st'],
-    'Robertson Quay':  ['robertson quay', 'river valley', 'mohamed sultan'],
-    'Everton Park':    ['everton park', 'everton rd'],
-    'Orchard':         ['orchard', 'somerset', 'scotts'],
-    'Kampong Glam':    ['kampong glam', 'haji lane', 'arab st', 'muscat st'],
-    'Tanjong Pagar':   ['tanjong pagar', 'guoco', 'wallich'],
-    'Clementi':        ['clementi', 'sunset way'],
-    'Bukit Timah':     ['bukit timah', 'sixth avenue', '6th avenue', 'dunearn'],
+    'Bras Basah':      ['bras basah', 'bugis', 'bencoolen', 'victoria st', 'victoria street',
+                        'beach rd', 'beach road', 'middle rd', 'middle road', 'seah st', 'seah street',
+                        'purvis', 'waterloo', 'stamford rd', 'stamford road', 'bain st', 'bain street',
+                        'rochor', 'north bridge rd', 'north bridge road', 'golden mile', 'guoco midtown'],
+    'Robertson Quay':  ['robertson quay', 'river valley', 'mohamed sultan', 'clemenceau'],
+    'Orchard':         ['orchard', 'somerset', 'scotts', 'tanglin', 'nassim'],
+    'Kampong Glam':    ['kampong glam', 'haji lane', 'arab st', 'arab street', 'muscat st',
+                        'muscat street', 'aliwal', 'sultan gate', 'kandahar'],
+    'Tanjong Pagar':   ['tanjong pagar', 'guoco tower', 'wallich', 'anson rd', 'anson road',
+                        'shenton way', 'maxwell'],
+    'Clementi':        ['clementi', 'sunset way', 'west coast', 'w coast', 'kent ridge', 'pasir panjang'],
+    'Bukit Timah':     ['bukit timah', 'sixth avenue', '6th avenue', 'dunearn', "duke's rd", 'dukes rd'],
     'Serangoon':       ['serangoon', 'nex', 'kovan', 'upper serangoon'],
     'Toa Payoh':       ['toa payoh'],
     'Ang Mo Kio':      ['ang mo kio', 'amk'],
@@ -135,17 +145,17 @@ const NEIGHBORHOOD_KEYWORDS = {
     'Tampines':        ['tampines'],
     'Woodlands':       ['woodlands'],
     'Jurong':          ['jurong', 'jurong east', 'jurong west'],
-    // Additional neighborhoods for broader coverage
-    'Changi':          ['changi', 'airport blvd', 'jewel'],
+    // NOTE: 'changi' alone is too broad (matches "Changi Rd" which is in Paya Lebar area)
+    'Changi':          ['changi airport', 'changi village', 'airport blvd', 'jewel changi', 'changi business'],
     'Thomson':         ['upper thomson', 'thomson rd', 'thomson road', 'sin ming'],
-    'Paya Lebar':      ['paya lebar', 'geylang serai', 'sims ave'],
+    'Paya Lebar':      ['paya lebar', 'geylang serai', 'sims ave', 'sims avenue', 'changi rd', 'changi road'],
     'Bedok':           ['bedok', 'bedok north', 'bedok south'],
     'Bishan':          ['bishan', 'marymount'],
     'Novena':          ['novena', 'balestier', 'whampoa'],
     'Marine Parade':   ['marine parade', 'marine terrace'],
     'Kallang':         ['kallang', 'stadium', 'mountbatten'],
     'Sentosa':         ['sentosa', 'harbourfront'],
-    'City Hall':       ['city hall', 'raffles place', 'marina bay', 'fullerton'],
+    'City Hall':       ['city hall', 'raffles place', 'marina bay', 'fullerton', 'raffles blvd'],
 };
 
 // ─── Category / rejection filters ──────────────────────────────────────────────
@@ -238,39 +248,77 @@ function detectNeighborhood(address) {
     for (const [name, keywords] of Object.entries(NEIGHBORHOOD_KEYWORDS)) {
         if (keywords.some(kw => lower.includes(kw))) return name;
     }
+    // Fallback: map Singapore postal code sector (first 2 digits) to neighborhood
+    // Reference: https://www.ura.gov.sg/property-market-information/pmiResearchPaperPdfDisplay?year=2024
     const postalMatch = address.match(/\b(\d{6})\b/);
     if (postalMatch) {
         const postalMap = {
-            '01': 'City Hall', '02': 'City Hall', '03': 'Queenstown',
-            '04': 'Telok Ayer', '05': 'Telok Ayer', '06': 'City Hall',
-            '07': 'Bras Basah', '08': 'Bras Basah', '09': 'Orchard',
-            '10': 'Orchard', '11': 'Orchard', '12': 'Toa Payoh',
-            '13': 'Toa Payoh', '14': 'Jalan Besar', '15': 'Joo Chiat',
-            '16': 'Siglap', '17': 'Tiong Bahru', '18': 'Tampines',
-            '19': 'Serangoon', '20': 'Ang Mo Kio', '21': 'Clementi',
-            '22': 'Jurong', '23': 'Bukit Timah', '24': 'Bukit Timah',
-            '25': 'Woodlands', '26': 'Woodlands', '27': 'Woodlands',
-            '28': 'Serangoon', '29': 'Serangoon', '30': 'Ang Mo Kio',
-            '31': 'Toa Payoh', '32': 'Tampines',
-            '33': 'Serangoon', '34': 'Serangoon', '35': 'Jalan Besar',
-            '36': 'Jalan Besar', '37': 'Kallang', '38': 'Marine Parade',
-            '39': 'Marine Parade', '40': 'Paya Lebar', '41': 'Paya Lebar',
-            '42': 'Joo Chiat', '43': 'Bedok', '44': 'Bedok',
-            '45': 'Bedok', '46': 'Pasir Ris', '47': 'Tampines',
-            '48': 'Tampines', '49': 'Changi', '50': 'Pasir Ris',
-            '51': 'Bishan', '52': 'Toa Payoh', '53': 'Serangoon',
-            '54': 'Novena', '55': 'Novena', '56': 'Thomson',
-            '57': 'Thomson', '58': 'Ang Mo Kio', '59': 'Ang Mo Kio',
-            '60': 'Clementi', '61': 'Clementi', '62': 'Jurong',
-            '63': 'Jurong', '64': 'Jurong', '65': 'Woodlands',
-            '66': 'Woodlands', '67': 'Woodlands', '68': 'Woodlands',
-            '69': 'Woodlands', '72': 'Woodlands', '73': 'Woodlands',
-            '75': 'Woodlands', '76': 'Woodlands', '77': 'Woodlands',
-            '78': 'Woodlands', '79': 'Woodlands', '80': 'Changi',
-            '81': 'Changi', '82': 'Changi'
+            // D01: Raffles Place, Cecil, Marina, People's Park
+            '01': 'City Hall',      '02': 'City Hall',      '03': 'City Hall',
+            '04': 'City Hall',      '05': 'Keong Saik',     '06': 'Telok Ayer',
+            // D02: Anson, Tanjong Pagar
+            '07': 'Tanjong Pagar',  '08': 'Keong Saik',
+            // D04: Telok Blangah, Harbourfront
+            '09': 'Sentosa',        '10': 'Sentosa',
+            // D05: Pasir Panjang, Clementi
+            '11': 'Clementi',       '12': 'Clementi',       '13': 'Clementi',
+            // D03: Queenstown, Tiong Bahru
+            '14': 'Tiong Bahru',    '15': 'Tiong Bahru',    '16': 'Tiong Bahru',
+            // D06-D07: Beach Road, Bugis, Golden Mile
+            '17': 'Bras Basah',     '18': 'Bras Basah',     '19': 'Bras Basah',
+            // D08: Little India
+            '20': 'Jalan Besar',    '21': 'Jalan Besar',
+            // D09: Orchard, River Valley
+            '22': 'Orchard',        '23': 'Robertson Quay',
+            // D10: Ardmore, Bukit Timah, Holland Road, Tanglin
+            '24': 'Orchard',        '25': 'Holland Village', '26': 'Holland Village',
+            '27': 'Bukit Timah',
+            // D11: Novena, Watten Estate, Thomson
+            '28': 'Novena',         '29': 'Novena',         '30': 'Novena',
+            // D12: Balestier, Toa Payoh
+            '31': 'Toa Payoh',      '32': 'Toa Payoh',      '33': 'Toa Payoh',
+            // D13: Macpherson, Braddell
+            '34': 'Paya Lebar',     '35': 'Paya Lebar',     '36': 'Paya Lebar',
+            '37': 'Kallang',
+            // D14: Geylang, Eunos
+            '38': 'Paya Lebar',     '39': 'Paya Lebar',     '40': 'Paya Lebar',
+            '41': 'Paya Lebar',
+            // D15: Katong, Joo Chiat, Marine Parade
+            '42': 'Joo Chiat',      '43': 'Joo Chiat',      '44': 'Marine Parade',
+            '45': 'Marine Parade',
+            // D16: Bedok, Upper East Coast, Siglap
+            '46': 'Siglap',         '47': 'Bedok',          '48': 'Bedok',
+            // D17: Changi, Loyang
+            '49': 'Changi',         '50': 'Changi',
+            // D18: Tampines, Pasir Ris
+            '51': 'Tampines',       '52': 'Pasir Ris',
+            // D19: Serangoon Garden, Hougang, Punggol
+            '53': 'Serangoon',      '54': 'Serangoon',      '55': 'Serangoon',
+            // D20: Bishan, Ang Mo Kio
+            '56': 'Ang Mo Kio',     '57': 'Bishan',
+            // D21: Upper Bukit Timah, Clementi Park
+            '58': 'Bukit Timah',    '59': 'Bukit Timah',
+            // D22: Jurong
+            '60': 'Clementi',       '61': 'Jurong',         '62': 'Jurong',
+            '63': 'Jurong',         '64': 'Jurong',
+            // D23: Hillview, Bukit Panjang, Choa Chu Kang
+            '65': 'Bukit Timah',    '66': 'Bukit Timah',    '67': 'Bukit Timah',
+            '68': 'Bukit Timah',
+            // D24: Lim Chu Kang, Tengah
+            '69': 'Jurong',         '70': 'Jurong',         '71': 'Jurong',
+            // D25: Kranji, Woodgrove
+            '72': 'Woodlands',      '73': 'Woodlands',
+            // D27: Yishun, Sembawang
+            '75': 'Woodlands',      '76': 'Woodlands',
+            // D26: Upper Thomson, Springleaf
+            '77': 'Thomson',        '78': 'Thomson',
+            // D28: Seletar
+            '79': 'Thomson',        '80': 'Changi',
+            // Additional sectors
+            '81': 'Changi',         '82': 'Serangoon',
         };
-        const districtStr = postalMatch[1].substring(0, 2);
-        if (postalMap[districtStr]) return postalMap[districtStr];
+        const sectorStr = postalMatch[1].substring(0, 2);
+        if (postalMap[sectorStr]) return postalMap[sectorStr];
     }
     return null;
 }

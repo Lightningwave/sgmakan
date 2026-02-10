@@ -31,8 +31,15 @@ function Home() {
         return () => { isMounted = false; };
     }, []);
 
-    const featuredCafes = cafes.slice(0, 3);
-    const recentCafes = cafes.slice(3, 6);
+    // Top Picks: highest rated cafes
+    const featuredCafes = [...cafes]
+        .sort((a, b) => parseFloat(b.rating || 0) - parseFloat(a.rating || 0))
+        .slice(0, 6);
+
+    // Recently Added: newest cafes by created_at date
+    const recentCafes = [...cafes]
+        .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0))
+        .slice(0, 6);
 
     if (loading) {
         return (
