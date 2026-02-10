@@ -16,6 +16,7 @@ function Admin() {
     const [editingCafe, setEditingCafe] = useState(null);
     const [rejectingId, setRejectingId] = useState(null);
     const [rejectReason, setRejectReason] = useState('');
+    const [deletingCafe, setDeletingCafe] = useState(null);
 
     useEffect(() => {
         let isMounted = true;
@@ -76,9 +77,10 @@ function Admin() {
         return () => { isMounted = false; };
     }, [activeTab]);
 
-    const handleDeleteCafe = async (cafeId) => {
-        if (!window.confirm('Are you sure you want to delete this cafe?')) return;
-        
+    const handleDeleteCafe = async () => {
+        if (!deletingCafe) return;
+        const cafeId = deletingCafe.cafe_id;
+
         const { error } = await supabase.from('cafes').delete().eq('cafe_id', cafeId);
         if (error) {
             alert('Failed to delete cafe: ' + error.message);
@@ -86,6 +88,7 @@ function Admin() {
         }
         setCafes(cafes.filter(c => c.cafe_id !== cafeId));
         setStats(prev => ({ ...prev, cafes: prev.cafes - 1 }));
+        setDeletingCafe(null);
     };
 
     const handleApprovePending = async (pending) => {
@@ -302,7 +305,7 @@ function Admin() {
                                                         </button>
                                                         <button
                                                             className="btn-action delete"
-                                                            onClick={() => handleDeleteCafe(cafe.cafe_id)}
+                                                            onClick={() => setDeletingCafe(cafe)}
                                                         >
                                                             Delete
                                                         </button>
@@ -733,6 +736,37 @@ function Admin() {
                     </div>
                 </div>
             )}
+            {/* Delete Cafe Modal */}
+            {deletingCafe && (
+                <div className="modal-overlay" onClick={() => setDeletingCafe(null)}>
+                    <div className="modal-content reject-modal" onClick={e => e.stopPropagation()}>
+                        <div className="modal-header">
+                            <h2>Delete Cafe</h2>
+                            <button className="modal-close" onClick={() => setDeletingCafe(null)}>×</button>
+                        </div>
+                        <div className="modal-body">
+                            <p style={{ marginBottom: '12px', color: '#4a5568', fontSize: '14px' }}>
+                                Are you sure you want to remove <strong>{deletingCafe.title}</strong> from the list? This cannot be undone.
+                            </p>
+                            <div className="form-actions" style={{ marginTop: '16px' }}>
+                                <button
+                                    className="btn-secondary"
+                                    onClick={() => setDeletingCafe(null)}
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    className="btn-action delete"
+                                    onClick={handleDeleteCafe}
+                                >
+                                    Delete
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* Reject Reason Modal */}
             {rejectingId && (
                 <div className="modal-overlay" onClick={() => setRejectingId(null)}>
