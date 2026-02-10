@@ -23,7 +23,7 @@ function isRetryableError(error) {
         message.includes('jwt') ||
         message.includes('token') ||
         message.includes('expired') ||
-        error?.code === 'PGRST301' // JWT error
+        error?.code === 'PGRST301'
     );
 }
 
@@ -56,7 +56,8 @@ function transformCafe(dbCafe) {
         vibe: dbCafe.vibe,
         tags: dbCafe.tags || [],
         description: dbCafe.description,
-        image: dbCafe.image_url || dbCafe.image
+        image: dbCafe.image_url || dbCafe.image,
+        created_at: dbCafe.created_at
     };
 }
 
@@ -151,13 +152,25 @@ export async function fetchNeighborhoods() {
 export async function fetchCafesByNeighborhood(area) {
     try {
         return await withRetry(async () => {
-            // Convert area id to neighborhood name (e.g., "tiong-bahru" -> "Tiong Bahru")
+            // Convert area slug to neighborhood name (e.g., "tiong-bahru" -> "Tiong Bahru")
             const areaName = area.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
             
+            // Look up the neighborhood_id by name
+            const { data: neighborhood, error: nhError } = await supabase
+                .from('neighborhoods')
+                .select('neighborhood_id')
+                .eq('name', areaName)
+                .single();
+
+            if (nhError || !neighborhood) {
+                console.warn(`Neighborhood "${areaName}" not found, returning empty`);
+                return [];
+            }
+
             const { data, error } = await supabase
                 .from('cafes')
                 .select('*')
-                .eq('location', areaName)
+                .eq('neighborhood_id', neighborhood.neighborhood_id)
                 .eq('is_active', true)
                 .order('title');
 
