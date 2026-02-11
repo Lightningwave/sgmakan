@@ -4,6 +4,7 @@ import Card from '../components/Card';
 import EmptyState from '../components/EmptyState';
 import { fetchCafes, fetchCafesByNeighborhood, fetchNeighborhoods, fetchUserFavorites, updateCafeStatus, removeCafeStatus } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
+import StatusDropdown from '../components/StatusDropdown';
 
 function Explore() {
     const location = useLocation();
@@ -255,9 +256,11 @@ function Explore() {
                                             <span className="icon">📄</span> {cafe.title}
                                         </td>
                                         <td>
-                                            <span className={`status-pill ${(cafe.userStatus || 'want-to-go').toLowerCase().replace(/\s+/g, '-')}`}>
-                                                {cafe.userStatus === 'Favorite' ? 'Favorite' : cafe.userStatus === 'Visited' ? 'Visited' : 'To Visit'}
-                                            </span>
+                                            <StatusDropdown
+                                                cafeId={cafe.cafe_id}
+                                                userStatus={cafe.userStatus}
+                                                onStatusChange={handleCardStatusChange}
+                                            />
                                         </td>
                                         <td><span className="area-pill">{cafe.location}</span></td>
                                         <td>{cafe.mrt}</td>
