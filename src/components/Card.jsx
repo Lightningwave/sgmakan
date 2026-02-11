@@ -1,54 +1,8 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { useAuth } from '../contexts/AuthContext';
+import React from 'react';
+import { Link } from 'react-router-dom';
+import StatusDropdown from './StatusDropdown';
 
-const STATUS_OPTIONS = [
-    { value: 'Want to go', label: 'To Visit' },
-    { value: 'Visited', label: 'Visited' },
-    { value: 'Favorite', label: 'Favorite' },
-];
-
-function Card({ id, cafe_id, title, location, rating, price, userStatus, mrt, vibe, tags, image, onStatusChange }) {
-    const { isAuthenticated } = useAuth();
-    const navigate = useNavigate();
-    const [showMenu, setShowMenu] = useState(false);
-    const menuRef = useRef(null);
-
-    // Default to "Want to go" display when no user status
-    const displayStatus = userStatus || 'Want to go';
-    const currentOpt = STATUS_OPTIONS.find(o => o.value === displayStatus);
-
-    // Close menu on outside click
-    useEffect(() => {
-        if (!showMenu) return;
-        const handler = (e) => {
-            if (menuRef.current && !menuRef.current.contains(e.target)) {
-                setShowMenu(false);
-            }
-        };
-        document.addEventListener('mousedown', handler);
-        return () => document.removeEventListener('mousedown', handler);
-    }, [showMenu]);
-
-    const handleStatusClick = (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        if (!isAuthenticated) {
-            navigate('/login');
-            return;
-        }
-        setShowMenu(prev => !prev);
-    };
-
-    const handleSelect = async (e, value) => {
-        e.preventDefault();
-        e.stopPropagation();
-        setShowMenu(false);
-        if (onStatusChange && cafe_id) {
-            await onStatusChange(cafe_id, value);
-        }
-    };
-
+function Card({ id, cafe_id, title, location, price, userStatus, tags, image, onStatusChange }) {
     return (
         <Link to={`/place/${id}`} className="card-link">
             <div className="card">
@@ -63,31 +17,13 @@ function Card({ id, cafe_id, title, location, rating, price, userStatus, mrt, vi
 
                     <div className="card-properties">
                         {/* Status Property — dropdown */}
-                        <div className="property-row" ref={menuRef}>
+                        <div className="property-row">
                             <span className="property-name">Status</span>
-                            <div className="card-status-wrapper">
-                                <button
-                                    className={`card-status-trigger ${displayStatus.toLowerCase().replace(/\s+/g, '-')}`}
-                                    onClick={handleStatusClick}
-                                >
-                                    {currentOpt?.label || 'To Visit'}
-                                    <span className="card-status-chevron">▾</span>
-                                </button>
-                                {showMenu && (
-                                    <div className="card-status-menu">
-                                        {STATUS_OPTIONS.map(opt => (
-                                            <button
-                                                key={opt.value}
-                                                className={`card-status-option ${displayStatus === opt.value ? 'selected' : ''}`}
-                                                onClick={(e) => handleSelect(e, opt.value)}
-                                            >
-                                                {opt.label}
-                                                {displayStatus === opt.value && <span className="check-mark">✓</span>}
-                                            </button>
-                                        ))}
-                                    </div>
-                                )}
-                            </div>
+                            <StatusDropdown
+                                cafeId={cafe_id}
+                                userStatus={userStatus}
+                                onStatusChange={onStatusChange}
+                            />
                         </div>
 
                         {/* Area Property */}
