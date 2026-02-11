@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { fetchCafeById, fetchJournalNote, saveJournalNote, fetchUserCafeStatus, updateCafeStatus, removeCafeStatus } from '../services/api';
+import { fetchCafeById, fetchJournalNote, saveJournalNote, fetchUserCafeStatus, updateCafeStatus } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import StatusDropdown, { STATUS_OPTIONS } from '../components/StatusDropdown';
 
