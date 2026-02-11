@@ -2,17 +2,20 @@ import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import Card from '../components/Card';
 import EmptyState from '../components/EmptyState';
-import { fetchCafes, fetchCafesByNeighborhood, fetchNeighborhoods } from '../services/api';
+import { fetchCafes, fetchCafesByNeighborhood, fetchNeighborhoods, fetchUserFavorites, updateCafeStatus, removeCafeStatus } from '../services/api';
+import { useAuth } from '../contexts/AuthContext';
 
 function Explore() {
     const location = useLocation();
     const navigate = useNavigate();
+    const { isAuthenticated } = useAuth();
     const queryParams = new URLSearchParams(location.search);
     const area = queryParams.get('area');
     const statusParam = queryParams.get('status');
 
     const [cafes, setCafes] = useState([]);
     const [neighborhoods, setNeighborhoods] = useState([]);
+    const [userFavorites, setUserFavorites] = useState({});
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
@@ -21,13 +24,17 @@ function Explore() {
         async function loadData() {
             setLoading(true);
             try {
-                const [cafesData, neighborhoodsData] = await Promise.all([
+                const promises = [
                     area && area !== 'all' ? fetchCafesByNeighborhood(area) : fetchCafes(),
                     fetchNeighborhoods()
-                ]);
+                ];
+                if (isAuthenticated) promises.push(fetchUserFavorites());
+
+                const results = await Promise.all(promises);
                 if (isMounted) {
-                    setCafes(cafesData);
-                    setNeighborhoods(neighborhoodsData);
+                    setCafes(results[0]);
+                    setNeighborhoods(results[1]);
+                    if (results[2]) setUserFavorites(results[2]);
                     setLoading(false);
                 }
             } catch (error) {
@@ -40,9 +47,13 @@ function Explore() {
         loadData();
         
         return () => { isMounted = false; };
-    }, [area]);
+    }, [area, isAuthenticated]);
 
-    const filteredCafes = cafes; // TODO: add client-side filtering if needed
+    // Merge user's per-cafe status into cafe list
+    const cafesWithStatus = cafes.map(cafe => ({
+        ...cafe,
+        userStatus: userFavorites[cafe.cafe_id] || null
+    }));
 
     const currentNeighborhood = area && area !== 'all'
         ? neighborhoods.find(n => n.id === area)
@@ -61,13 +72,13 @@ function Explore() {
         }
     }, [statusParam]);
 
-    // Filter by area first, then by status and search query
-    const displayedCafes = filteredCafes.filter(cafe => {
+    // Filter by user status and search query
+    const displayedCafes = cafesWithStatus.filter(cafe => {
         let statusMatch = true;
         if (statusFilter === 'all') statusMatch = true;
-        else if (statusFilter === 'favorite') statusMatch = cafe.status === 'Favorite';
-        else if (statusFilter === 'want-to-go') statusMatch = cafe.status === 'Want to go';
-        else if (statusFilter === 'visited') statusMatch = cafe.status === 'Visited';
+        else if (statusFilter === 'favorite') statusMatch = cafe.userStatus === 'Favorite';
+        else if (statusFilter === 'want-to-go') statusMatch = cafe.userStatus === 'Want to go';
+        else if (statusFilter === 'visited') statusMatch = cafe.userStatus === 'Visited';
 
         if (!statusMatch) return false;
 
@@ -84,7 +95,7 @@ function Explore() {
     });
 
     const handleSurpriseMe = () => {
-        const wantToGo = displayedCafes.filter(c => c.status === 'Want to go');
+        const wantToGo = displayedCafes.filter(c => c.userStatus === 'Want to go');
         const pool = wantToGo.length > 0 ? wantToGo : displayedCafes;
 
         if (pool.length === 0) {
@@ -94,6 +105,29 @@ function Explore() {
 
         const randomCafe = pool[Math.floor(Math.random() * pool.length)];
         navigate(`/place/${randomCafe.id}`);
+    };
+
+    // Handle status change from Card dropdown
+    const handleCardStatusChange = async (cafeId, newStatus) => {
+        try {
+            if (newStatus) {
+                await updateCafeStatus(cafeId, newStatus);
+            } else {
+                await removeCafeStatus(cafeId);
+            }
+            // Update local state immediately
+            setUserFavorites(prev => {
+                const updated = { ...prev };
+                if (newStatus) {
+                    updated[cafeId] = newStatus;
+                } else {
+                    delete updated[cafeId];
+                }
+                return updated;
+            });
+        } catch (error) {
+            console.error('Error updating status:', error);
+        }
     };
 
     if (loading) {
@@ -186,7 +220,7 @@ function Explore() {
                 <div className="card-grid">
                     {displayedCafes.length > 0 ? (
                         displayedCafes.map((cafe) => (
-                            <Card key={cafe.id} {...cafe} />
+                            <Card key={cafe.id} {...cafe} onStatusChange={handleCardStatusChange} />
                         ))
                     ) : (
                         <div style={{ gridColumn: '1 / -1' }}>
@@ -221,8 +255,8 @@ function Explore() {
                                             <span className="icon">📄</span> {cafe.title}
                                         </td>
                                         <td>
-                                            <span className={`status-pill ${(cafe.status || 'active').toLowerCase().replace(/\s+/g, '-')}`}>
-                                                {cafe.status || 'Active'}
+                                            <span className={`status-pill ${(cafe.userStatus || 'want-to-go').toLowerCase().replace(/\s+/g, '-')}`}>
+                                                {cafe.userStatus === 'Favorite' ? 'Favorite' : cafe.userStatus === 'Visited' ? 'Visited' : 'To Visit'}
                                             </span>
                                         </td>
                                         <td><span className="area-pill">{cafe.location}</span></td>
