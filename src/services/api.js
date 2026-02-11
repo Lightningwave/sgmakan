@@ -51,7 +51,7 @@ function transformCafe(dbCafe) {
         location: dbCafe.location,
         rating: dbCafe.rating?.toString() || '0',
         price: dbCafe.price,
-        status: dbCafe.status || 'Active',
+        userStatus: null, // merged from favorites table per-user
         mrt: dbCafe.mrt,
         vibe: dbCafe.vibe,
         tags: dbCafe.tags || [],
@@ -253,7 +253,7 @@ export async function saveJournalNote(cafeId, note) {
                     .insert({
                         cafe_id: cafeId,
                         user_id: user.id,
-                        status: 'Visited',
+                        status: 'Want to go',
                         note: note || null
                     });
 
@@ -269,6 +269,120 @@ export async function saveJournalNote(cafeId, note) {
             hint: error?.hint,
             code: error?.code
         });
+        throw error;
+    }
+}
+
+// ─── USER FAVORITES (per-user cafe status) ──────────────────────────────────────
+
+// Fetch all favorites for the current user (returns map of cafe_id -> status)
+export async function fetchUserFavorites() {
+    try {
+        return await withRetry(async () => {
+            const { data: { user } } = await supabase.auth.getUser();
+            if (!user) return {};
+
+            const { data, error } = await supabase
+                .from('favorites')
+                .select('cafe_id, status')
+                .eq('user_id', user.id);
+
+            if (error) throw error;
+
+            const favMap = {};
+            (data || []).forEach(fav => {
+                favMap[fav.cafe_id] = fav.status;
+            });
+            return favMap;
+        });
+    } catch (error) {
+        console.error('Error fetching user favorites:', error?.message);
+        return {};
+    }
+}
+
+// Fetch user's status for a single cafe
+export async function fetchUserCafeStatus(cafeId) {
+    try {
+        return await withRetry(async () => {
+            const { data: { user } } = await supabase.auth.getUser();
+            if (!user) return null;
+
+            const { data, error } = await supabase
+                .from('favorites')
+                .select('status')
+                .eq('cafe_id', cafeId)
+                .eq('user_id', user.id)
+                .single();
+
+            if (error) {
+                if (error.code === 'PGRST116') return null;
+                throw error;
+            }
+            return data?.status || null;
+        });
+    } catch (error) {
+        console.error('Error fetching cafe status:', error?.message);
+        return null;
+    }
+}
+
+// Set or update the user's status for a cafe (Favorite, Want to go, Visited)
+export async function updateCafeStatus(cafeId, status) {
+    try {
+        return await withRetry(async () => {
+            const { data: { user } } = await supabase.auth.getUser();
+            if (!user) throw new Error('Authentication required');
+
+            const { data: existing } = await supabase
+                .from('favorites')
+                .select('favorite_id')
+                .eq('cafe_id', cafeId)
+                .eq('user_id', user.id)
+                .single();
+
+            if (existing) {
+                const { error } = await supabase
+                    .from('favorites')
+                    .update({ status })
+                    .eq('favorite_id', existing.favorite_id);
+                if (error) throw error;
+            } else {
+                const { error } = await supabase
+                    .from('favorites')
+                    .insert({
+                        cafe_id: cafeId,
+                        user_id: user.id,
+                        status
+                    });
+                if (error) throw error;
+            }
+            return true;
+        });
+    } catch (error) {
+        console.error('Error updating cafe status:', error?.message);
+        throw error;
+    }
+}
+
+// Remove user's status for a cafe (delete the favorites row)
+export async function removeCafeStatus(cafeId) {
+    try {
+        return await withRetry(async () => {
+            const { data: { user } } = await supabase.auth.getUser();
+            if (!user) throw new Error('Authentication required');
+
+            const { error } = await supabase
+                .from('favorites')
+                .delete()
+                .eq('cafe_id', cafeId)
+                .eq('user_id', user.id);
+
+            if (error) throw error;
+            return true;
+        });
+    } catch (error) {
+        console.error('Error removing cafe status:', error?.message);
         throw error;
     }
 }

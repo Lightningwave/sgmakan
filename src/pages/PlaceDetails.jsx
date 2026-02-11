@@ -1,7 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { fetchCafeById, fetchJournalNote, saveJournalNote } from '../services/api';
+import { fetchCafeById, fetchJournalNote, saveJournalNote, fetchUserCafeStatus, updateCafeStatus, removeCafeStatus } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
+
+const STATUS_OPTIONS = [
+    { value: 'Want to go', label: 'To Visit' },
+    { value: 'Visited', label: 'Visited' },
+    { value: 'Favorite', label: 'Favorite' },
+];
 
 function PlaceDetails() {
     const { id } = useParams();
@@ -13,6 +19,9 @@ function PlaceDetails() {
     const [saving, setSaving] = useState(false);
     const [saved, setSaved] = useState(false);
     const [noteLoading, setNoteLoading] = useState(false);
+    const [userStatus, setUserStatus] = useState(null);
+    const [showStatusMenu, setShowStatusMenu] = useState(false);
+    const statusMenuRef = useRef(null);
 
     useEffect(() => {
         let isMounted = true;
@@ -27,9 +36,13 @@ function PlaceDetails() {
                     if (isAuthenticated && data?.cafe_id) {
                         setNoteLoading(true);
                         try {
-                            const existingNote = await fetchJournalNote(data.cafe_id);
-                            if (isMounted && existingNote) {
-                                setNote(existingNote);
+                            const [existingNote, existingStatus] = await Promise.all([
+                                fetchJournalNote(data.cafe_id),
+                                fetchUserCafeStatus(data.cafe_id)
+                            ]);
+                            if (isMounted) {
+                                if (existingNote) setNote(existingNote);
+                                setUserStatus(existingStatus);
                             }
                         } catch (error) {
                             console.error('Error loading journal note:', error);
@@ -51,6 +64,40 @@ function PlaceDetails() {
         
         return () => { isMounted = false; };
     }, [id, isAuthenticated]);
+
+    // Close status menu on outside click
+    useEffect(() => {
+        if (!showStatusMenu) return;
+        const handler = (e) => {
+            if (statusMenuRef.current && !statusMenuRef.current.contains(e.target)) {
+                setShowStatusMenu(false);
+            }
+        };
+        document.addEventListener('mousedown', handler);
+        return () => document.removeEventListener('mousedown', handler);
+    }, [showStatusMenu]);
+
+    const handleStatusSelect = async (value) => {
+        if (!isAuthenticated) {
+            const confirmLogin = window.confirm('Please sign in to save cafes. Go to login?');
+            if (confirmLogin) navigate(`/login?redirect=/place/${id}`);
+            return;
+        }
+        if (!cafe?.cafe_id) return;
+        setShowStatusMenu(false);
+
+        try {
+            if (userStatus === value) {
+                await removeCafeStatus(cafe.cafe_id);
+                setUserStatus(null);
+            } else {
+                await updateCafeStatus(cafe.cafe_id, value);
+                setUserStatus(value);
+            }
+        } catch (error) {
+            console.error('Error updating status:', error);
+        }
+    };
 
     if (loading) {
         return <div className="place-details-error">Loading...</div>;
@@ -105,7 +152,9 @@ function PlaceDetails() {
                 <Link to="/explore" className="back-link-hero">← Back to Explore</Link>
                 <div className="place-hero-content">
                     <div className="place-badges">
-                        <span className="place-badge-status">{cafe.status}</span>
+                        <span className="place-badge-status">
+                            {STATUS_OPTIONS.find(o => o.value === (userStatus || 'Want to go'))?.label || 'To Visit'}
+                        </span>
                         <span className="place-badge-area">{cafe.location}</span>
                     </div>
                     <h1>{cafe.title}</h1>
@@ -183,11 +232,35 @@ function PlaceDetails() {
                     </div>
 
                     <div className="place-actions">
-                        <div className="status-control">
-                            <label>Status:</label>
-                            <span className={`status-pill ${cafe.status.toLowerCase().replace(/\s+/g, '-')}`}>
-                                {cafe.status}
-                            </span>
+                        <div className="card-status-wrapper detail-status" ref={statusMenuRef}>
+                            <button
+                                className={`card-status-trigger ${(userStatus || 'want-to-go').toLowerCase().replace(/\s+/g, '-')}`}
+                                onClick={() => {
+                                    if (!isAuthenticated) {
+                                        const confirmLogin = window.confirm('Please sign in to save cafes. Go to login?');
+                                        if (confirmLogin) navigate(`/login?redirect=/place/${id}`);
+                                        return;
+                                    }
+                                    setShowStatusMenu(prev => !prev);
+                                }}
+                            >
+                                {STATUS_OPTIONS.find(o => o.value === (userStatus || 'Want to go'))?.label || 'To Visit'}
+                                <span className="card-status-chevron">▾</span>
+                            </button>
+                            {showStatusMenu && (
+                                <div className="card-status-menu">
+                                    {STATUS_OPTIONS.map(opt => (
+                                        <button
+                                            key={opt.value}
+                                            className={`card-status-option ${(userStatus || 'Want to go') === opt.value ? 'selected' : ''}`}
+                                            onClick={() => handleStatusSelect(opt.value)}
+                                        >
+                                            {opt.label}
+                                            {(userStatus || 'Want to go') === opt.value && <span className="check-mark">✓</span>}
+                                        </button>
+                                    ))}
+                                </div>
+                            )}
                         </div>
                         <button className="btn-primary" onClick={openGoogleMaps}>Get Directions</button>
                     </div>
