@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { supabase } from '../services/supabase';
+import { useAuth } from '../contexts/AuthContext';
 
 function ResetPassword() {
     const navigate = useNavigate();
+    const { updatePassword, getSession, onAuthStateChange } = useAuth();
     const [formData, setFormData] = useState({
         password: '',
         confirmPassword: ''
@@ -17,7 +18,7 @@ function ResetPassword() {
     useEffect(() => {
         const checkSession = async () => {
             try {
-                const { data: { session } } = await supabase.auth.getSession();
+                const session = await getSession();
                 
                 if (session) {
                     setValidSession(true);
@@ -34,7 +35,7 @@ function ResetPassword() {
 
         checkSession();
 
-        const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+        const subscription = onAuthStateChange((event) => {
             if (event === 'PASSWORD_RECOVERY') {
                 setValidSession(true);
                 setCheckingSession(false);
@@ -44,6 +45,7 @@ function ResetPassword() {
         return () => {
             subscription?.unsubscribe();
         };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     const handleChange = (e) => {
@@ -76,11 +78,7 @@ function ResetPassword() {
             setLoading(true);
             setError('');
 
-            const { error: updateError } = await supabase.auth.updateUser({
-                password: formData.password
-            });
-
-            if (updateError) throw updateError;
+            await updatePassword(formData.password);
 
             setSuccess(true);
             

@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import Card from '../components/Card';
 import EmptyState from '../components/EmptyState';
 import { fetchCafes, fetchCafesByNeighborhood, fetchNeighborhoods, fetchUserFavorites, updateCafeStatus, removeCafeStatus } from '../services/api';
+import LoadingSpinner from '../components/LoadingSpinner';
 import { useAuth } from '../contexts/AuthContext';
 import StatusDropdown from '../components/StatusDropdown';
 
@@ -134,7 +135,7 @@ function Explore() {
     if (loading) {
         return (
             <div className="explore-page">
-                <div style={{ textAlign: 'center', padding: '40px' }}>Loading...</div>
+                <LoadingSpinner />
             </div>
         );
     }
