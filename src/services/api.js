@@ -365,6 +365,193 @@ export async function updateCafeStatus(cafeId, status) {
     }
 }
 
+// ─── ADMIN API ───────────────────────────────────────────────────────────────
+
+// Fetch dashboard stats (counts)
+export async function fetchAdminStats() {
+    try {
+        const [cafesRes, usersRes, pendingRes, logsRes] = await Promise.all([
+            supabase.from('cafes').select('*', { count: 'exact', head: true }),
+            supabase.from('profiles').select('*', { count: 'exact', head: true }),
+            supabase.from('pending_cafes').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
+            supabase.from('ai_pipeline_log').select('*', { count: 'exact', head: true })
+        ]);
+        return {
+            cafes: cafesRes.count || 0,
+            users: usersRes.count || 0,
+            pending: pendingRes.count || 0,
+            aiRuns: logsRes.count || 0
+        };
+    } catch (error) {
+        console.error('Error fetching admin stats:', error?.message);
+        return { cafes: 0, users: 0, pending: 0, aiRuns: 0 };
+    }
+}
+
+// Fetch all neighborhoods (raw, with IDs — for admin selects)
+export async function fetchAdminNeighborhoods() {
+    try {
+        const { data, error } = await supabase
+            .from('neighborhoods')
+            .select('*')
+            .order('name');
+        if (error) throw error;
+        return data || [];
+    } catch (error) {
+        console.error('Error fetching admin neighborhoods:', error?.message);
+        return [];
+    }
+}
+
+// Fetch recent activity for overview (AI runs + approved/rejected cafes)
+export async function fetchRecentActivity() {
+    try {
+        const [recentLogs, recentPending] = await Promise.all([
+            supabase.from('ai_pipeline_log').select('*').order('started_at', { ascending: false }).limit(3),
+            supabase.from('pending_cafes').select('*').neq('status', 'pending').order('reviewed_at', { ascending: false }).limit(5)
+        ]);
+
+        const activity = [];
+        (recentLogs.data || []).forEach(log => {
+            activity.push({
+                type: 'ai_run',
+                label: `AI pipeline ${log.status}`,
+                detail: `Found ${log.cafes_found || 0}, verified ${log.cafes_verified || 0}`,
+                date: log.started_at
+            });
+        });
+        (recentPending.data || []).forEach(p => {
+            activity.push({
+                type: p.status === 'verified' ? 'approved' : 'rejected',
+                label: `${p.status === 'verified' ? 'Approved' : 'Rejected'}: ${p.title}`,
+                detail: p.failure_reason || '',
+                date: p.reviewed_at || p.created_at
+            });
+        });
+        activity.sort((a, b) => new Date(b.date) - new Date(a.date));
+        return activity.slice(0, 5);
+    } catch (error) {
+        console.error('Error fetching recent activity:', error?.message);
+        return [];
+    }
+}
+
+// Fetch all cafes for admin table (includes joined neighborhood name)
+export async function fetchAdminCafes() {
+    try {
+        const { data, error } = await supabase
+            .from('cafes')
+            .select('*, neighborhoods(name)')
+            .order('created_at', { ascending: false });
+        if (error) throw error;
+        return data || [];
+    } catch (error) {
+        console.error('Error fetching admin cafes:', error?.message);
+        return [];
+    }
+}
+
+// Fetch pending cafes for admin review
+export async function fetchPendingCafes() {
+    try {
+        const { data, error } = await supabase
+            .from('pending_cafes')
+            .select('*, neighborhoods(name)')
+            .eq('status', 'pending')
+            .order('created_at', { ascending: false });
+        if (error) throw error;
+        return data || [];
+    } catch (error) {
+        console.error('Error fetching pending cafes:', error?.message);
+        return [];
+    }
+}
+
+// Fetch AI pipeline logs
+export async function fetchAiLogs() {
+    try {
+        const { data, error } = await supabase
+            .from('ai_pipeline_log')
+            .select('*')
+            .order('started_at', { ascending: false })
+            .limit(200);
+        if (error) throw error;
+        return data || [];
+    } catch (error) {
+        console.error('Error fetching AI logs:', error?.message);
+        return [];
+    }
+}
+
+// Delete a cafe
+export async function deleteCafe(cafeId) {
+    const { error } = await supabase.from('cafes').delete().eq('cafe_id', cafeId);
+    if (error) throw error;
+    return true;
+}
+
+// Approve a pending cafe (insert into cafes + mark pending as verified)
+export async function approvePendingCafe(pending, reviewerId) {
+    const { error: insertError } = await supabase.from('cafes').insert({
+        title: pending.title,
+        neighborhood_id: pending.neighborhood_id,
+        location: pending.location,
+        rating: pending.rating,
+        price: pending.price,
+        mrt: pending.mrt,
+        vibe: pending.vibe,
+        tags: pending.tags,
+        description: pending.description,
+        image_url: pending.image_url,
+        source: 'ai'
+    });
+    if (insertError) throw insertError;
+
+    const { error: updateError } = await supabase
+        .from('pending_cafes')
+        .update({ status: 'verified', reviewed_by: reviewerId, reviewed_at: new Date().toISOString() })
+        .eq('pending_id', pending.pending_id);
+    if (updateError) console.error('Failed to update pending status:', updateError);
+
+    return true;
+}
+
+// Reject a pending cafe
+export async function rejectPendingCafe(pendingId, reason, reviewerId) {
+    const { error } = await supabase
+        .from('pending_cafes')
+        .update({
+            status: 'failed',
+            failure_reason: reason,
+            reviewed_by: reviewerId,
+            reviewed_at: new Date().toISOString()
+        })
+        .eq('pending_id', pendingId);
+    if (error) throw error;
+    return true;
+}
+
+// Create a new cafe (admin manual add)
+export async function createCafe(payload) {
+    const { data, error } = await supabase
+        .from('cafes')
+        .insert([{ ...payload, source: 'manual' }])
+        .select('*, neighborhoods(name)')
+        .single();
+    if (error) throw error;
+    return data;
+}
+
+// Update an existing cafe
+export async function updateCafe(cafeId, payload) {
+    const { error } = await supabase
+        .from('cafes')
+        .update(payload)
+        .eq('cafe_id', cafeId);
+    if (error) throw error;
+    return true;
+}
+
 // Remove user's status for a cafe (delete the favorites row)
 export async function removeCafeStatus(cafeId) {
     try {

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { fetchCafeById, fetchJournalNote, saveJournalNote, fetchUserCafeStatus, updateCafeStatus } from '../services/api';
+import LoadingSpinner from '../components/LoadingSpinner';
 import { useAuth } from '../contexts/AuthContext';
 import StatusDropdown, { STATUS_OPTIONS } from '../components/StatusDropdown';
 
@@ -68,7 +69,7 @@ function PlaceDetails() {
     };
 
     if (loading) {
-        return <div className="place-details-error">Loading...</div>;
+        return <LoadingSpinner />;
     }
 
     if (!cafe) {

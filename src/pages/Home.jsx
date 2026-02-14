@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import Card from '../components/Card';
 import Hero from '../components/Hero';
 import EmptyState from '../components/EmptyState';
+import LoadingSpinner from '../components/LoadingSpinner';
 import { fetchCafes } from '../services/api';
 import { Link } from 'react-router-dom';
 
@@ -45,7 +46,7 @@ function Home() {
         return (
             <div className="home-page">
                 <Hero />
-                <div style={{ textAlign: 'center', padding: '40px' }}>Loading...</div>
+                <LoadingSpinner />
             </div>
         );
     }

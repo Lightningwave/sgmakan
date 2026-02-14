@@ -181,6 +181,29 @@ export const AuthProvider = ({ children }) => {
         return data;
     };
 
+    // Update user password
+    const updatePassword = async (newPassword) => {
+        const { data, error } = await supabase.auth.updateUser({
+            password: newPassword
+        });
+
+        if (error) throw error;
+        return data;
+    };
+
+    // Get current auth session
+    const getSession = async () => {
+        const { data, error } = await supabase.auth.getSession();
+        if (error) throw error;
+        return data.session;
+    };
+
+    // Subscribe to auth state changes (returns unsubscribe function)
+    const onAuthStateChange = (callback) => {
+        const { data } = supabase.auth.onAuthStateChange(callback);
+        return data.subscription;
+    };
+
     // Delete/deactivate user account
     const deleteAccount = async () => {
         if (!user) throw new Error('Not authenticated');
@@ -233,8 +256,11 @@ export const AuthProvider = ({ children }) => {
         signOut,
         resetPassword,
         updateEmail,
+        updatePassword,
         updateProfile,
         deleteAccount,
+        getSession,
+        onAuthStateChange,
         isAuthenticated: !!user,
         isAdmin: profile?.role === 'admin'
     };

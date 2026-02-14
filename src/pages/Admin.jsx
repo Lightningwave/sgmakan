@@ -1,6 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { supabase } from '../services/supabase';
+import Modal from '../components/Modal';
+import LoadingSpinner from '../components/LoadingSpinner';
+import {
+    fetchAdminStats, fetchAdminNeighborhoods, fetchRecentActivity,
+    fetchAdminCafes, fetchPendingCafes, fetchAiLogs,
+    deleteCafe, approvePendingCafe, rejectPendingCafe,
+    createCafe, updateCafe
+} from '../services/api';
 
 function Admin() {
     const { profile } = useAuth();
@@ -9,6 +16,7 @@ function Admin() {
     const [cafes, setCafes] = useState([]);
     const [pendingCafes, setPendingCafes] = useState([]);
     const [aiLogs, setAiLogs] = useState([]);
+    const [recentActivity, setRecentActivity] = useState([]);
     const [selectedLog, setSelectedLog] = useState(null); 
     const [loading, setLoading] = useState(true);
     const [neighborhoods, setNeighborhoods] = useState([]);
@@ -17,6 +25,15 @@ function Admin() {
     const [rejectingId, setRejectingId] = useState(null);
     const [rejectReason, setRejectReason] = useState('');
     const [deletingCafe, setDeletingCafe] = useState(null);
+    // Manage Cafes — search, filter, sort, pagination
+    const [cafeSearch, setCafeSearch] = useState('');
+    const [cafeNeighborhoodFilter, setCafeNeighborhoodFilter] = useState('all');
+    const [sortField, setSortField] = useState('created_at');
+    const [sortDirection, setSortDirection] = useState('desc');
+    const [cafePage, setCafePage] = useState(1);
+    // AI Logs — pagination
+    const [logPage, setLogPage] = useState(1);
+    const ITEMS_PER_PAGE = 10;
 
     useEffect(() => {
         let isMounted = true;
@@ -24,47 +41,28 @@ function Admin() {
         const fetchData = async () => {
             setLoading(true);
             try {
-                // Fetch stats for overview
-                const [cafesRes, usersRes, pendingRes, logsRes, neighborhoodsRes] = await Promise.all([
-                    supabase.from('cafes').select('*', { count: 'exact', head: true }),
-                    supabase.from('profiles').select('*', { count: 'exact', head: true }),
-                    supabase.from('pending_cafes').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
-                    supabase.from('ai_pipeline_log').select('*', { count: 'exact', head: true }),
-                    supabase.from('neighborhoods').select('*').order('name')
+                // Fetch stats + neighborhoods (shared across tabs)
+                const [statsData, neighborhoodsData] = await Promise.all([
+                    fetchAdminStats(),
+                    fetchAdminNeighborhoods()
                 ]);
-
                 if (!isMounted) return;
+                setStats(statsData);
+                setNeighborhoods(neighborhoodsData);
 
-                setStats({
-                    cafes: cafesRes.count || 0,
-                    users: usersRes.count || 0,
-                    pending: pendingRes.count || 0,
-                    aiRuns: logsRes.count || 0
-                });
-
-                setNeighborhoods(neighborhoodsRes.data || []);
-
-                // Fetch data based on active tab
-                if (activeTab === 'cafes') {
-                    const { data } = await supabase
-                        .from('cafes')
-                        .select('*, neighborhoods(name)')
-                        .order('created_at', { ascending: false });
-                    if (isMounted) setCafes(data || []);
+                // Fetch tab-specific data
+                if (activeTab === 'overview') {
+                    const activity = await fetchRecentActivity();
+                    if (isMounted) setRecentActivity(activity);
+                } else if (activeTab === 'cafes') {
+                    const data = await fetchAdminCafes();
+                    if (isMounted) setCafes(data);
                 } else if (activeTab === 'pending') {
-                    const { data } = await supabase
-                        .from('pending_cafes')
-                        .select('*, neighborhoods(name)')
-                        .eq('status', 'pending')
-                        .order('created_at', { ascending: false });
-                    if (isMounted) setPendingCafes(data || []);
+                    const data = await fetchPendingCafes();
+                    if (isMounted) setPendingCafes(data);
                 } else if (activeTab === 'ai-logs') {
-                    const { data } = await supabase
-                        .from('ai_pipeline_log')
-                        .select('*')
-                        .order('started_at', { ascending: false })
-                        .limit(50);
-                    if (isMounted) setAiLogs(data || []);
+                    const data = await fetchAiLogs();
+                    if (isMounted) setAiLogs(data);
                 }
             } catch (error) {
                 console.error('Error fetching data:', error);
@@ -80,76 +78,50 @@ function Admin() {
     const handleDeleteCafe = async () => {
         if (!deletingCafe) return;
         const cafeId = deletingCafe.cafe_id;
-
-        const { error } = await supabase.from('cafes').delete().eq('cafe_id', cafeId);
-        if (error) {
+        try {
+            await deleteCafe(cafeId);
+            setCafes(cafes.filter(c => c.cafe_id !== cafeId));
+            setStats(prev => ({ ...prev, cafes: prev.cafes - 1 }));
+            setDeletingCafe(null);
+        } catch (error) {
             alert('Failed to delete cafe: ' + error.message);
-            return;
         }
-        setCafes(cafes.filter(c => c.cafe_id !== cafeId));
-        setStats(prev => ({ ...prev, cafes: prev.cafes - 1 }));
-        setDeletingCafe(null);
     };
 
     const handleApprovePending = async (pending) => {
-        const { error: insertError } = await supabase.from('cafes').insert({
-            title: pending.title,
-            neighborhood_id: pending.neighborhood_id,
-            location: pending.location,
-            rating: pending.rating,
-            price: pending.price,
-            mrt: pending.mrt,
-            vibe: pending.vibe,
-            tags: pending.tags,
-            description: pending.description,
-            image_url: pending.image_url,
-            source: 'ai'
-        });
-
-        if (insertError) {
-            alert('Failed to approve cafe: ' + insertError.message);
-            return;
+        try {
+            await approvePendingCafe(pending, profile?.profile_id);
+            setPendingCafes(pendingCafes.filter(p => p.pending_id !== pending.pending_id));
+            setStats(prev => ({ ...prev, pending: prev.pending - 1, cafes: prev.cafes + 1 }));
+        } catch (error) {
+            alert('Failed to approve cafe: ' + error.message);
         }
-
-        const { error: updateError } = await supabase
-            .from('pending_cafes')
-            .update({ status: 'verified', reviewed_by: profile?.profile_id, reviewed_at: new Date().toISOString() })
-            .eq('pending_id', pending.pending_id);
-
-        if (updateError) {
-            console.error('Failed to update pending status:', updateError);
-        }
-
-        setPendingCafes(pendingCafes.filter(p => p.pending_id !== pending.pending_id));
-        setStats(prev => ({ ...prev, pending: prev.pending - 1, cafes: prev.cafes + 1 }));
     };
 
     const handleRejectPending = async () => {
         if (!rejectReason.trim() || !rejectingId) return;
-
-        const { error } = await supabase
-            .from('pending_cafes')
-            .update({
-                status: 'failed',
-                failure_reason: rejectReason.trim(),
-                reviewed_by: profile?.profile_id,
-                reviewed_at: new Date().toISOString()
-            })
-            .eq('pending_id', rejectingId);
-
-        if (error) {
+        try {
+            await rejectPendingCafe(rejectingId, rejectReason.trim(), profile?.profile_id);
+            setPendingCafes(pendingCafes.filter(p => p.pending_id !== rejectingId));
+            setStats(prev => ({ ...prev, pending: prev.pending - 1 }));
+            setRejectingId(null);
+            setRejectReason('');
+        } catch (error) {
             alert('Failed to reject cafe: ' + error.message);
-            return;
         }
-
-        setPendingCafes(pendingCafes.filter(p => p.pending_id !== rejectingId));
-        setStats(prev => ({ ...prev, pending: prev.pending - 1 }));
-        setRejectingId(null);
-        setRejectReason('');
     };
 
     const handleEditCafe = (cafe) => {
-        setEditingCafe({ ...cafe });
+        setEditingCafe({ ...cafe, _isNew: false });
+        setIsEditing(true);
+    };
+
+    const handleAddCafe = () => {
+        setEditingCafe({
+            title: '', neighborhood_id: '', location: '', rating: '',
+            price: '', mrt: '', vibe: '', tags: [], description: '',
+            image_url: '', _isNew: true
+        });
         setIsEditing(true);
     };
 
@@ -158,46 +130,102 @@ function Admin() {
         setEditingCafe(null);
     };
 
+    // Sort toggle
+    const handleSort = (field) => {
+        if (sortField === field) {
+            setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
+        } else {
+            setSortField(field);
+            setSortDirection('asc');
+        }
+    };
+
+    // Filtered + sorted cafes for Manage tab
+    // Filtered + sorted cafes (full list)
+    const filteredCafes = cafes
+        .filter(cafe => {
+            if (cafeSearch) {
+                const q = cafeSearch.toLowerCase();
+                const match = (cafe.title || '').toLowerCase().includes(q)
+                    || (cafe.location || '').toLowerCase().includes(q)
+                    || (cafe.mrt || '').toLowerCase().includes(q);
+                if (!match) return false;
+            }
+            if (cafeNeighborhoodFilter !== 'all') {
+                if (String(cafe.neighborhood_id) !== cafeNeighborhoodFilter) return false;
+            }
+            return true;
+        })
+        .sort((a, b) => {
+            let aVal, bVal;
+            if (sortField === 'title') {
+                aVal = (a.title || '').toLowerCase();
+                bVal = (b.title || '').toLowerCase();
+            } else if (sortField === 'neighborhood') {
+                aVal = (a.neighborhoods?.name || '').toLowerCase();
+                bVal = (b.neighborhoods?.name || '').toLowerCase();
+            } else if (sortField === 'rating') {
+                aVal = parseFloat(a.rating) || 0;
+                bVal = parseFloat(b.rating) || 0;
+            } else if (sortField === 'source') {
+                aVal = a.source || '';
+                bVal = b.source || '';
+            } else {
+                aVal = new Date(a.created_at || 0);
+                bVal = new Date(b.created_at || 0);
+            }
+            if (aVal < bVal) return sortDirection === 'asc' ? -1 : 1;
+            if (aVal > bVal) return sortDirection === 'asc' ? 1 : -1;
+            return 0;
+        });
+
+    // Pagination — cafes
+    const cafePageCount = Math.ceil(filteredCafes.length / ITEMS_PER_PAGE);
+    const displayedCafes = filteredCafes.slice((cafePage - 1) * ITEMS_PER_PAGE, cafePage * ITEMS_PER_PAGE);
+
+    // Pagination — AI logs
+    const logPageCount = Math.ceil(aiLogs.length / ITEMS_PER_PAGE);
+    const displayedLogs = aiLogs.slice((logPage - 1) * ITEMS_PER_PAGE, logPage * ITEMS_PER_PAGE);
+
     const handleSaveCafe = async (updatedCafe) => {
         try {
-            const { error } = await supabase
-                .from('cafes')
-                .update({
-                    title: updatedCafe.title,
-                    neighborhood_id: updatedCafe.neighborhood_id,
-                    location: updatedCafe.location,
-                    rating: updatedCafe.rating,
-                    price: updatedCafe.price,
-                    mrt: updatedCafe.mrt,
-                    vibe: updatedCafe.vibe,
-                    tags: updatedCafe.tags,
-                    description: updatedCafe.description,
-                    image_url: updatedCafe.image_url,
-                    last_updated: new Date().toISOString()
-                })
-                .eq('cafe_id', updatedCafe.cafe_id);
+            const payload = {
+                title: updatedCafe.title,
+                neighborhood_id: updatedCafe.neighborhood_id || null,
+                location: updatedCafe.location,
+                rating: updatedCafe.rating || null,
+                price: updatedCafe.price || null,
+                mrt: updatedCafe.mrt || null,
+                vibe: updatedCafe.vibe || null,
+                tags: updatedCafe.tags || [],
+                description: updatedCafe.description || '',
+                image_url: updatedCafe.image_url || null,
+                last_updated: new Date().toISOString()
+            };
 
-            if (!error) {
-                // Update local state
+            if (updatedCafe._isNew) {
+                const data = await createCafe(payload);
+                setCafes(prev => [data, ...prev]);
+                setStats(prev => ({ ...prev, cafes: prev.cafes + 1 }));
+            } else {
+                await updateCafe(updatedCafe.cafe_id, payload);
                 setCafes(cafes.map(cafe =>
                     cafe.cafe_id === updatedCafe.cafe_id ? { ...cafe, ...updatedCafe } : cafe
                 ));
-                setIsEditing(false);
-                setEditingCafe(null);
-            } else {
-                alert('Error updating cafe: ' + error.message);
             }
+            setIsEditing(false);
+            setEditingCafe(null);
         } catch (error) {
             console.error('Error saving cafe:', error);
-            alert('Failed to save cafe changes');
+            alert('Failed to save cafe: ' + (error?.message || 'Unknown error'));
         }
     };
 
     const tabs = [
-        { id: 'overview', label: 'Overview', icon: '' },
-        { id: 'cafes', label: 'Manage Cafes', icon: '' },
-        { id: 'pending', label: 'Pending Cafes', icon: '' },
-        { id: 'ai-logs', label: 'AI Pipeline Logs', icon: '' }
+        { id: 'overview', label: 'Overview' },
+        { id: 'cafes', label: 'Cafes' },
+        { id: 'pending', label: 'Pending' },
+        { id: 'ai-logs', label: 'AI Logs' }
     ];
 
     return (
@@ -214,22 +242,21 @@ function Admin() {
                         className={`admin-tab ${activeTab === tab.id ? 'active' : ''}`}
                         onClick={() => setActiveTab(tab.id)}
                     >
-                        <span className="tab-icon">{tab.icon}</span>
-                        <span className="tab-label">{tab.label}</span>
+                        {tab.label}
                     </button>
                 ))}
             </div>
 
             <div className="admin-content">
                 {loading ? (
-                    <div className="admin-loading">Loading...</div>
+                    <LoadingSpinner />
                 ) : (
                     <>
                         {/* Overview Tab */}
                         {activeTab === 'overview' && (
                             <div className="admin-overview">
                                 <div className="stats-grid">
-                                    <div className="stat-card">
+                                    <div className="stat-card clickable" onClick={() => setActiveTab('cafes')}>
                                         <span className="stat-icon">CAF</span>
                                         <div className="stat-info">
                                             <span className="stat-value">{stats.cafes}</span>
@@ -243,14 +270,14 @@ function Admin() {
                                             <span className="stat-label">Total Users</span>
                                         </div>
                                     </div>
-                                    <div className="stat-card pending">
+                                    <div className="stat-card pending clickable" onClick={() => setActiveTab('pending')}>
                                         <span className="stat-icon">PEN</span>
                                         <div className="stat-info">
                                             <span className="stat-value">{stats.pending}</span>
                                             <span className="stat-label">Pending Review</span>
                                         </div>
                                     </div>
-                                    <div className="stat-card">
+                                    <div className="stat-card clickable" onClick={() => setActiveTab('ai-logs')}>
                                         <span className="stat-icon">AI</span>
                                         <div className="stat-info">
                                             <span className="stat-value">{stats.aiRuns}</span>
@@ -258,6 +285,25 @@ function Admin() {
                                         </div>
                                     </div>
                                 </div>
+                                {recentActivity.length > 0 && (
+                                    <div className="recent-activity">
+                                        <h3>Recent Activity</h3>
+                                        <div className="activity-list">
+                                            {recentActivity.map((item, i) => (
+                                                <div key={i} className={`activity-item ${item.type}`}>
+                                                    <span className={`activity-dot ${item.type}`} />
+                                                    <div className="activity-content">
+                                                        <span className="activity-label">{item.label}</span>
+                                                        {item.detail && <span className="activity-detail">{item.detail}</span>}
+                                                    </div>
+                                                    <span className="activity-time">
+                                                        {item.date ? new Date(item.date).toLocaleDateString() : ''}
+                                                    </span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         )}
 
@@ -265,58 +311,123 @@ function Admin() {
                         {activeTab === 'cafes' && (
                             <div className="admin-cafes">
                                 <div className="admin-table-header">
-                                    <h2>All Cafes</h2>
+                                    <h2>All Cafes ({filteredCafes.length})</h2>
+                                    <button className="btn-action edit" onClick={handleAddCafe}>+ New Cafe</button>
                                 </div>
-                                <table className="admin-table">
-                                    <thead>
-                                        <tr>
-                                            <th>Name</th>
-                                            <th>Neighborhood</th>
-                                            <th>Rating</th>
-                                            <th>Source</th>
-                                            <th>Actions</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {cafes.map(cafe => (
-                                            <tr key={cafe.cafe_id}>
-                                                <td>
-                                                    <div className="cafe-cell">
-                                                        {cafe.image_url && (
-                                                            <img src={cafe.image_url} alt="" className="cafe-thumb" />
-                                                        )}
-                                                        <span>{cafe.title}</span>
-                                                    </div>
-                                                </td>
-                                                <td>{cafe.neighborhoods?.name || '-'}</td>
-                                                <td>{cafe.rating || '-'}</td>
-                                                <td>
-                                                    <span className={`source-badge ${cafe.source}`}>
-                                                        {cafe.source}
-                                                    </span>
-                                                </td>
-                                                <td>
-                                                    <div className="action-buttons">
-                                                        <button
-                                                            className="btn-action edit"
-                                                            onClick={() => handleEditCafe(cafe)}
-                                                        >
-                                                            Edit
-                                                        </button>
-                                                        <button
-                                                            className="btn-action delete"
-                                                            onClick={() => setDeletingCafe(cafe)}
-                                                        >
-                                                            Delete
-                                                        </button>
-                                                    </div>
-                                                </td>
-                                            </tr>
+                                <div className="admin-filters">
+                                    <input
+                                        type="text"
+                                        className="admin-search"
+                                        placeholder="Search by name, address, or MRT..."
+                                        value={cafeSearch}
+                                        onChange={e => { setCafeSearch(e.target.value); setCafePage(1); }}
+                                    />
+                                    <select
+                                        className="admin-filter-select"
+                                        value={cafeNeighborhoodFilter}
+                                        onChange={e => { setCafeNeighborhoodFilter(e.target.value); setCafePage(1); }}
+                                    >
+                                        <option value="all">All Neighborhoods</option>
+                                        {neighborhoods.map(n => (
+                                            <option key={n.neighborhood_id} value={n.neighborhood_id}>{n.name}</option>
                                         ))}
-                                    </tbody>
-                                </table>
-                                {cafes.length === 0 && (
-                                    <div className="empty-state">No cafes found</div>
+                                    </select>
+                                </div>
+                                <div className="admin-table-wrap">
+                                    <table className="admin-table">
+                                        <thead>
+                                            <tr>
+                                                <th className="sortable" onClick={() => handleSort('title')}>
+                                                    Name {sortField === 'title' && (sortDirection === 'asc' ? '↑' : '↓')}
+                                                </th>
+                                                <th className="sortable" onClick={() => handleSort('neighborhood')}>
+                                                    Area {sortField === 'neighborhood' && (sortDirection === 'asc' ? '↑' : '↓')}
+                                                </th>
+                                                <th className="sortable" onClick={() => handleSort('rating')}>
+                                                    Rating {sortField === 'rating' && (sortDirection === 'asc' ? '↑' : '↓')}
+                                                </th>
+                                                <th className="sortable" onClick={() => handleSort('source')}>
+                                                    Source {sortField === 'source' && (sortDirection === 'asc' ? '↑' : '↓')}
+                                                </th>
+                                                <th>Actions</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {displayedCafes.map(cafe => (
+                                                <tr key={cafe.cafe_id}>
+                                                    <td>
+                                                        <div className="cafe-cell">
+                                                            {cafe.image_url ? (
+                                                                <img src={cafe.image_url} alt="" className="cafe-thumb" />
+                                                            ) : (
+                                                                <span className="no-img-indicator" title="No image">—</span>
+                                                            )}
+                                                            <span>{cafe.title}</span>
+                                                        </div>
+                                                    </td>
+                                                    <td>{cafe.neighborhoods?.name || '-'}</td>
+                                                    <td>{cafe.rating || '-'}</td>
+                                                    <td>
+                                                        <span className={`source-badge ${cafe.source}`}>
+                                                            {cafe.source}
+                                                        </span>
+                                                    </td>
+                                                    <td>
+                                                        <div className="action-buttons">
+                                                            <button
+                                                                className="btn-action edit"
+                                                                onClick={() => handleEditCafe(cafe)}
+                                                            >
+                                                                Edit
+                                                            </button>
+                                                            <button
+                                                                className="btn-action delete"
+                                                                onClick={() => setDeletingCafe(cafe)}
+                                                            >
+                                                                Delete
+                                                            </button>
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                                {filteredCafes.length === 0 && (
+                                    <div className="empty-state">
+                                        {cafeSearch || cafeNeighborhoodFilter !== 'all'
+                                            ? 'No cafes match your search'
+                                            : 'No cafes found'}
+                                    </div>
+                                )}
+                                {cafePageCount > 1 && (
+                                    <div className="pagination">
+                                        <button
+                                            className="pagination-btn"
+                                            disabled={cafePage === 1}
+                                            onClick={() => setCafePage(prev => prev - 1)}
+                                        >
+                                            Previous
+                                        </button>
+                                        <div className="pagination-pages">
+                                            {Array.from({ length: cafePageCount }, (_, i) => i + 1).map(p => (
+                                                <button
+                                                    key={p}
+                                                    className={`pagination-num ${p === cafePage ? 'active' : ''}`}
+                                                    onClick={() => setCafePage(p)}
+                                                >
+                                                    {p}
+                                                </button>
+                                            ))}
+                                        </div>
+                                        <button
+                                            className="pagination-btn"
+                                            disabled={cafePage === cafePageCount}
+                                            onClick={() => setCafePage(prev => prev + 1)}
+                                        >
+                                            Next
+                                        </button>
+                                    </div>
                                 )}
                             </div>
                         )}
@@ -389,7 +500,7 @@ function Admin() {
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        {aiLogs.map(log => (
+                                        {displayedLogs.map(log => (
                                             <tr 
                                                 key={log.log_id} 
                                                 className="log-row-clickable"
@@ -422,21 +533,47 @@ function Admin() {
                                 {aiLogs.length === 0 && (
                                     <div className="empty-state">No AI pipeline runs yet</div>
                                 )}
+                                {logPageCount > 1 && (
+                                    <div className="pagination">
+                                        <button
+                                            className="pagination-btn"
+                                            disabled={logPage === 1}
+                                            onClick={() => setLogPage(prev => prev - 1)}
+                                        >
+                                            Previous
+                                        </button>
+                                        <div className="pagination-pages">
+                                            {Array.from({ length: logPageCount }, (_, i) => i + 1).map(p => (
+                                                <button
+                                                    key={p}
+                                                    className={`pagination-num ${p === logPage ? 'active' : ''}`}
+                                                    onClick={() => setLogPage(p)}
+                                                >
+                                                    {p}
+                                                </button>
+                                            ))}
+                                        </div>
+                                        <button
+                                            className="pagination-btn"
+                                            disabled={logPage === logPageCount}
+                                            onClick={() => setLogPage(prev => prev + 1)}
+                                        >
+                                            Next
+                                        </button>
+                                    </div>
+                                )}
                             </div>
                         )}
                     </>
                 )}
             </div>
 
-            {/* Edit Cafe Modal */}
+            {/* Edit / Add Cafe Modal */}
             {isEditing && editingCafe && (
-                <div className="modal-overlay" onClick={handleCancelEdit}>
-                    <div className="modal-content" onClick={e => e.stopPropagation()}>
-                        <div className="modal-header">
-                            <h2>Edit Cafe: {editingCafe.title}</h2>
-                            <button className="modal-close" onClick={handleCancelEdit}>×</button>
-                        </div>
-                        <div className="modal-body">
+                <Modal
+                    title={editingCafe._isNew ? 'Add New Cafe' : `Edit Cafe: ${editingCafe.title}`}
+                    onClose={handleCancelEdit}
+                >
                             <form className="edit-cafe-form" onSubmit={(e) => {
                                 e.preventDefault();
                                 handleSaveCafe(editingCafe);
@@ -582,23 +719,19 @@ function Admin() {
                                         Cancel
                                     </button>
                                     <button type="submit" className="btn-primary">
-                                        Save Changes
+                                        {editingCafe._isNew ? 'Create Cafe' : 'Save Changes'}
                                     </button>
                                 </div>
                             </form>
-                        </div>
-                    </div>
-                </div>
+                </Modal>
             )}
             {/* Log Details Modal */}
             {selectedLog && (
-                <div className="modal-overlay" onClick={() => setSelectedLog(null)}>
-                    <div className="modal-content log-detail-modal" onClick={e => e.stopPropagation()}>
-                        <div className="modal-header">
-                            <h2>Pipeline Run #{selectedLog.log_id}</h2>
-                            <button className="modal-close" onClick={() => setSelectedLog(null)}>×</button>
-                        </div>
-                        <div className="modal-body">
+                <Modal
+                    title={`Pipeline Run #${selectedLog.log_id}`}
+                    onClose={() => setSelectedLog(null)}
+                    className="log-detail-modal"
+                >
                             {/* Run Info */}
                             <div className="log-run-info">
                                 <div className="log-info-row">
@@ -732,79 +865,40 @@ function Admin() {
                                     return null;
                                 }
                             })()}
-                        </div>
-                    </div>
-                </div>
+                </Modal>
             )}
             {/* Delete Cafe Modal */}
             {deletingCafe && (
-                <div className="modal-overlay" onClick={() => setDeletingCafe(null)}>
-                    <div className="modal-content reject-modal" onClick={e => e.stopPropagation()}>
-                        <div className="modal-header">
-                            <h2>Delete Cafe</h2>
-                            <button className="modal-close" onClick={() => setDeletingCafe(null)}>×</button>
-                        </div>
-                        <div className="modal-body">
-                            <p style={{ marginBottom: '12px', color: '#4a5568', fontSize: '14px' }}>
-                                Are you sure you want to remove <strong>{deletingCafe.title}</strong> from the list? This cannot be undone.
-                            </p>
-                            <div className="form-actions" style={{ marginTop: '16px' }}>
-                                <button
-                                    className="btn-secondary"
-                                    onClick={() => setDeletingCafe(null)}
-                                >
-                                    Cancel
-                                </button>
-                                <button
-                                    className="btn-action delete"
-                                    onClick={handleDeleteCafe}
-                                >
-                                    Delete
-                                </button>
-                            </div>
-                        </div>
+                <Modal title="Delete Cafe" onClose={() => setDeletingCafe(null)} className="reject-modal">
+                    <p style={{ marginBottom: '12px', color: '#4a5568', fontSize: '14px' }}>
+                        Are you sure you want to remove <strong>{deletingCafe.title}</strong> from the list? This cannot be undone.
+                    </p>
+                    <div className="form-actions" style={{ marginTop: '16px' }}>
+                        <button className="btn-secondary" onClick={() => setDeletingCafe(null)}>Cancel</button>
+                        <button className="btn-action delete" onClick={handleDeleteCafe}>Delete</button>
                     </div>
-                </div>
+                </Modal>
             )}
 
             {/* Reject Reason Modal */}
             {rejectingId && (
-                <div className="modal-overlay" onClick={() => setRejectingId(null)}>
-                    <div className="modal-content reject-modal" onClick={e => e.stopPropagation()}>
-                        <div className="modal-header">
-                            <h2>Reject Cafe</h2>
-                            <button className="modal-close" onClick={() => setRejectingId(null)}>×</button>
-                        </div>
-                        <div className="modal-body">
-                            <p style={{ marginBottom: '12px', color: '#718096', fontSize: '14px' }}>
-                                Why is this cafe being rejected?
-                            </p>
-                            <textarea
-                                className="reject-reason-input"
-                                value={rejectReason}
-                                onChange={(e) => setRejectReason(e.target.value)}
-                                placeholder="e.g. Not a cafe, permanently closed, duplicate entry..."
-                                rows="3"
-                                autoFocus
-                            />
-                            <div className="form-actions" style={{ marginTop: '16px' }}>
-                                <button 
-                                    className="btn-secondary" 
-                                    onClick={() => setRejectingId(null)}
-                                >
-                                    Cancel
-                                </button>
-                                <button 
-                                    className="btn-action reject"
-                                    onClick={handleRejectPending}
-                                    disabled={!rejectReason.trim()}
-                                >
-                                    Reject
-                                </button>
-                            </div>
-                        </div>
+                <Modal title="Reject Cafe" onClose={() => setRejectingId(null)} className="reject-modal">
+                    <p style={{ marginBottom: '12px', color: '#718096', fontSize: '14px' }}>
+                        Why is this cafe being rejected?
+                    </p>
+                    <textarea
+                        className="reject-reason-input"
+                        value={rejectReason}
+                        onChange={(e) => setRejectReason(e.target.value)}
+                        placeholder="e.g. Not a cafe, permanently closed, duplicate entry..."
+                        rows="3"
+                        autoFocus
+                    />
+                    <div className="form-actions" style={{ marginTop: '16px' }}>
+                        <button className="btn-secondary" onClick={() => setRejectingId(null)}>Cancel</button>
+                        <button className="btn-action reject" onClick={handleRejectPending} disabled={!rejectReason.trim()}>Reject</button>
                     </div>
-                </div>
+                </Modal>
             )}
         </div>
     );
