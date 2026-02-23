@@ -5,7 +5,6 @@
 
 import { supabase } from './supabase';
 
-// Ensure auth session is loaded before queries (prevents stale token on reload)
 async function ensureAuthSession() {
     try {
         await supabase.auth.getSession();
@@ -36,7 +35,6 @@ async function withRetry(fn, retries = 2, delay = 500) {
             if (i === retries || !isRetryableError(error)) {
                 throw error;
             }
-            // Wait before retry
             await new Promise(r => setTimeout(r, delay));
         }
     }
@@ -51,7 +49,7 @@ function transformCafe(dbCafe) {
         location: dbCafe.location,
         rating: dbCafe.rating?.toString() || '0',
         price: dbCafe.price,
-        userStatus: null, // merged from favorites table per-user
+        userStatus: null, 
         mrt: dbCafe.mrt,
         vibe: dbCafe.vibe,
         tags: dbCafe.tags || [],
@@ -403,7 +401,6 @@ export async function fetchAdminNeighborhoods() {
     }
 }
 
-// Fetch recent activity for overview (AI runs + approved/rejected cafes)
 export async function fetchRecentActivity() {
     try {
         const [recentLogs, recentPending] = await Promise.all([

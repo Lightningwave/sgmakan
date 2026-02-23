@@ -588,7 +588,6 @@ async function stage1_discover() {
         await sleep(SERPER_DELAY_MS);
     }
 
-    // De-duplicate by URL, then cap at MAX_ARTICLES
     const unique = new Map();
     for (const r of rawResults) {
         if (!unique.has(r.link)) unique.set(r.link, r);
@@ -855,17 +854,16 @@ Return ONLY a JSON object (no markdown, no code blocks):
     };
 }
 
-// Domains that serve expiring/broken/auth-gated images
 const BLOCKED_IMAGE_DOMAINS = [
     'lookaside.fbsbx.com',
     'lookaside.instagram.com',
     'scontent.cdninstagram.com',
-    'scontent-',               // Facebook CDN variants (scontent-sin6-1.xx.fbcdn.net)
+    'scontent-',              
     'fbcdn.net',
     'platform-lookaside',
     'graph.facebook.com',
-    'pbs.twimg.com',           // Twitter/X (often auth-gated)
-    'encrypted-tbn',           // Google thumbnail proxies (low-res)
+    'pbs.twimg.com',           
+    'encrypted-tbn',           
 ];
 
 function isValidImageUrl(url) {
@@ -873,7 +871,6 @@ function isValidImageUrl(url) {
     const lower = url.toLowerCase();
     if (BLOCKED_IMAGE_DOMAINS.some(d => lower.includes(d))) return false;
     if (lower.includes('placeholder') || lower.includes('no-image') || lower.includes('default-avatar')) return false;
-    // Must end with a common image extension or be from a known CDN
     const hasImageExt = /\.(jpg|jpeg|png|webp|gif|avif)/i.test(lower);
     const isKnownCDN = lower.includes('wp-content') || lower.includes('cloudinary') || lower.includes('imgix') || lower.includes('supabase');
     return hasImageExt || isKnownCDN;
