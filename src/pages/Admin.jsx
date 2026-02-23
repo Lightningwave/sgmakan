@@ -50,7 +50,6 @@ function Admin() {
                 setStats(statsData);
                 setNeighborhoods(neighborhoodsData);
 
-                // Fetch tab-specific data
                 if (activeTab === 'overview') {
                     const activity = await fetchRecentActivity();
                     if (isMounted) setRecentActivity(activity);
@@ -141,7 +140,6 @@ function Admin() {
     };
 
     // Filtered + sorted cafes for Manage tab
-    // Filtered + sorted cafes (full list)
     const filteredCafes = cafes
         .filter(cafe => {
             if (cafeSearch) {
