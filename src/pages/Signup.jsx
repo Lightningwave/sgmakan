@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 
 function Signup() {
-    const { signUp } = useAuth();
+    const { signUp, signInWithGoogle } = useAuth();
     const [formData, setFormData] = useState({
         email: '',
         password: '',
@@ -169,8 +169,16 @@ function Signup() {
                     <span>or</span>
                 </div>
 
-                <button className="auth-button-secondary" disabled>
-                    Sign up with Google (Coming Soon)
+                <button
+                    type="button"
+                    className="auth-button-secondary"
+                    onClick={async () => {
+                        try { await signInWithGoogle(); }
+                        catch (err) { setErrors({ general: err.message || 'Google sign-up failed' }); }
+                    }}
+                    disabled={loading}
+                >
+                    Sign up with Google
                 </button>
 
                 <div className="auth-switch">

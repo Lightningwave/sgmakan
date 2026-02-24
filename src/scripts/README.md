@@ -28,7 +28,7 @@ Copy the example env file in **project root**:
 copy .env.example .env
 ```
 
-Edit `.env` with your Supabase credentials:
+Edit `.env` with your credentials:
 ```env
 # React Frontend
 REACT_APP_SUPABASE_URL=https://your-project.supabase.co
@@ -38,16 +38,26 @@ REACT_APP_SUPABASE_ANON_KEY=your_anon_key
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_SERVICE_KEY=your_service_role_key
 
-# Serper + OpenRouter
+# Serper (Google Search API)
 SERPER_API_KEY=your_serper_api_key
+
+# AI Providers (pipeline: OpenRouter → Groq → Gemini)
 OPENROUTER_API_KEY=your_openrouter_api_key
 OPENROUTER_MODEL=qwen/qwen3-next-80b-a3b-instruct:free
+
+GROQ_API_KEY=your_groq_api_key
+GROQ_MODEL=llama-3.3-70b-versatile
+
+GEMINI_API_KEY=your_gemini_api_key
+GEMINI_MODEL=gemini-2.0-flash-lite
 ```
 
 Get your credentials from:
 - **Supabase keys**: https://supabase.com/dashboard/project/_/settings/api
 - **Serper API key**: https://serper.dev
 - **OpenRouter API key**: https://openrouter.ai/keys
+- **Groq API key**: https://console.groq.com/keys
+- **Google Gemini API key**: https://aistudio.google.com/apikey
 
 ### 4. Install Dependencies
 
@@ -119,8 +129,12 @@ All environment variables are stored in `.env` at the **project root**.
 | `SUPABASE_URL` | Node scripts | Supabase project URL |
 | `SUPABASE_SERVICE_KEY` | Node scripts | Service role key (bypasses RLS) |
 | `SERPER_API_KEY` | Discovery | Google Search + Places via Serper |
-| `OPENROUTER_API_KEY` | AI curator | OpenRouter API key |
-| `OPENROUTER_MODEL` | AI curator | AI model (default: qwen/qwen3-next-80b-a3b-instruct:free) |
+| `OPENROUTER_API_KEY` | AI curator | OpenRouter API (primary) |
+| `OPENROUTER_MODEL` | AI curator | Default: `qwen/qwen3-next-80b-a3b-instruct:free` |
+| `GROQ_API_KEY` | AI curator | Groq API (fallback) |
+| `GROQ_MODEL` | AI curator | Default: `llama-3.3-70b-versatile` |
+| `GEMINI_API_KEY` | AI curator | Google Gemini API (fallback) |
+| `GEMINI_MODEL` | AI curator | Default: `gemini-2.0-flash-lite` |
 
 ## Scheduling AI Discovery
 
@@ -133,9 +147,13 @@ Required secrets (set in repo Settings → Secrets):
 - `SUPABASE_SERVICE_KEY`
 - `SERPER_API_KEY`
 - `OPENROUTER_API_KEY`
+- `GROQ_API_KEY`
+- `GEMINI_API_KEY`
 
-Optional variable (Settings → Variables):
+Optional variables (Settings → Variables):
 - `OPENROUTER_MODEL` (defaults to `qwen/qwen3-next-80b-a3b-instruct:free`)
+- `GROQ_MODEL` (defaults to `llama-3.3-70b-versatile`)
+- `GEMINI_MODEL` (defaults to `gemini-2.0-flash-lite`)
 
 You can also trigger it manually from the **Actions** tab → **AI Cafe Discovery** → **Run workflow**.
 

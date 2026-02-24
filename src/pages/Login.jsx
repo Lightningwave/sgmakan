@@ -5,7 +5,7 @@ import { useAuth } from '../contexts/AuthContext';
 function Login() {
     const navigate = useNavigate();
     const [searchParams] = useSearchParams();
-    const { signIn } = useAuth();
+    const { signIn, signInWithGoogle } = useAuth();
     const [formData, setFormData] = useState({
         email: '',
         password: ''
@@ -100,8 +100,16 @@ function Login() {
                     <span>or</span>
                 </div>
 
-                <button className="auth-button-secondary" disabled>
-                    Continue with Google (Coming Soon)
+                <button
+                    type="button"
+                    className="auth-button-secondary"
+                    onClick={async () => {
+                        try { await signInWithGoogle(); }
+                        catch (err) { setError(err.message || 'Google sign-in failed'); }
+                    }}
+                    disabled={loading}
+                >
+                    Continue with Google
                 </button>
 
                 <div className="auth-switch">

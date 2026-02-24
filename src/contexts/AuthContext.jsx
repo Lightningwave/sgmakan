@@ -123,7 +123,17 @@ export const AuthProvider = ({ children }) => {
         return data;
     };
 
-    // Sign in with email and password
+    const signInWithGoogle = async () => {
+        const { data, error } = await supabase.auth.signInWithOAuth({
+            provider: 'google',
+            options: {
+                redirectTo: `${window.location.origin}/`,
+            },
+        });
+        if (error) throw error;
+        return data;
+    };
+
     const signIn = async (email, password) => {
         const { data, error } = await supabase.auth.signInWithPassword({
             email,
@@ -173,9 +183,10 @@ export const AuthProvider = ({ children }) => {
 
     // Update user email (requires confirmation)
     const updateEmail = async (newEmail) => {
-        const { data, error } = await supabase.auth.updateUser({
-            email: newEmail
-        });
+        const { data, error } = await supabase.auth.updateUser(
+            { email: newEmail },
+            { emailRedirectTo: `${window.location.origin}/profile` }
+        );
 
         if (error) throw error;
         return data;
@@ -253,6 +264,7 @@ export const AuthProvider = ({ children }) => {
         loading,
         signUp,
         signIn,
+        signInWithGoogle,
         signOut,
         resetPassword,
         updateEmail,
