@@ -126,6 +126,8 @@ function Profile() {
         }
     };
 
+    const isGoogleUser = user?.app_metadata?.provider === 'google';
+
     const getInitial = () => {
         if (formData.username) {
             return formData.username.charAt(0).toUpperCase();
@@ -172,14 +174,17 @@ function Profile() {
                     </button>
                 </form>
 
-                {/* Email Change Section */}
                 <div className="profile-section">
                     <div className="profile-section-header">
                         <h3>Email Address</h3>
                         <span className="current-email">{user?.email}</span>
                     </div>
 
-                    {!showEmailChange ? (
+                    {isGoogleUser ? (
+                        <span className="form-hint">
+                            Signed in with Google. Email is managed by your Google account.
+                        </span>
+                    ) : !showEmailChange ? (
                         <button 
                             className="auth-button-secondary"
                             onClick={() => setShowEmailChange(true)}
@@ -234,9 +239,11 @@ function Profile() {
                 </div>
 
                 <div className="profile-links">
-                    <Link to="/forgot-password" className="profile-link">
-                        Change Password
-                    </Link>
+                    {!isGoogleUser && (
+                        <Link to="/forgot-password" className="profile-link">
+                            Change Password
+                        </Link>
+                    )}
                     <button 
                         className="profile-link-button danger-link"
                         onClick={() => setShowDeleteAccount(!showDeleteAccount)}

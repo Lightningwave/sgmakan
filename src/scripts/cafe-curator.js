@@ -1,35 +1,29 @@
 /**
  * SGMakan Cafe Curator v3 — 4-Stage AI Pipeline
- * ================================================
+ *
  * Discovers new, trendy cafes/brunch spots in Singapore weekly.
  *
- * Stage 1 — DISCOVER: Search trusted food blogs via Serper for recent cafe articles.
- * Stage 2 — EXTRACT:  Use AI (structured output) to pull cafe names from blog snippets.
- * Stage 3 — VERIFY:   Cross-check every candidate against Google Places (Serper Places),
- *                      run fuzzy dedup against the existing DB, and let AI judge whether
- *                      the place is truly a new, currently-open cafe/brunch spot.
- * Stage 4 — ENRICH:   Generate description + vibe + tags + MRT in a SINGLE AI call,
- *                      find a valid image, map the neighborhood, and insert into DB.
- *                      High-confidence auto-promotes to `cafes`; low-confidence goes
- *                      to `pending_cafes` for admin review.
- *
- * Rate-limit aware (provider chain: OpenRouter → Groq → Gemini):
- *   - OpenRouter free tier: ~10-20 RPM
- *   - Groq free tier: 30 RPM, 1000 RPD
- *   - Gemini AI Studio free tier: 15 RPM, 1500 RPD
- *   - Global rate limiter enforces min gap between AI calls
- *   - Articles capped at 30, search queries capped at ~24
- *   - Enrichment uses 1 AI call per cafe (not 4)
- *
- * Designed to be run weekly via GitHub Actions (see .github/workflows/).
+ * Stage 1 — DISCOVER  Search trusted food blogs via Serper for recent cafe articles.
+ * Stage 2 — EXTRACT   Use AI to pull cafe names from blog snippets.
+ * Stage 3 — VERIFY    Cross-check against Google Places, fuzzy dedup against DB,
+ *                      and AI-judge whether the place is a real, open cafe.
+ * Stage 4 — ENRICH    Generate description + vibe + tags + MRT + neighborhood in
+ *                      one AI call, find a valid image, and insert into DB.
+ *                      Complete cafes auto-promote to `cafes`; incomplete ones
+ *                      (missing image, neighborhood, or low confidence) go to
+ *                      `pending_cafes` for admin review.
+ 
  */
+
+// ── Imports ──────────────────────────────────────────────────────────────────
 
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '..', '..', '.env') });
 const { supabase } = require('./db-config');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
-// ─── Config ────────────────────────────────────────────────────────────────────
+// ── Config ───────────────────────────────────────────────────────────────────
+
 const SERPER_API_KEY     = process.env.SERPER_API_KEY;
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const OPENROUTER_MODEL   = process.env.OPENROUTER_MODEL || 'qwen/qwen3-next-80b-a3b-instruct:free';
@@ -38,81 +32,50 @@ const GROQ_MODEL         = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
 const GEMINI_API_KEY     = process.env.GEMINI_API_KEY;
 const GEMINI_MODEL       = process.env.GEMINI_MODEL || 'gemini-2.0-flash-lite';
 
-// Gemini client (initialised lazily on first use)
-let geminiModel = null;
-function getGeminiModel() {
-    if (!geminiModel && GEMINI_API_KEY) {
-        const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-        geminiModel = genAI.getGenerativeModel({ model: GEMINI_MODEL });
-    }
-    return geminiModel;
-}
-
 const REQUEST_TIMEOUT_MS     = 25000;
 const REQUEST_RETRIES        = 2;
-const SERPER_DELAY_MS        = 600;      // delay between Serper calls
-const AUTO_APPROVE_THRESHOLD = 0.80;     // confidence >= 80% → straight to `cafes`
-const LOOKBACK_MONTHS        = 2;        // search current + previous month
-const MAX_ARTICLES           = 30;       // cap articles sent to AI extraction
-const EXTRACTION_BATCH_SIZE  = 10;       // articles per AI extraction call
+const SERPER_DELAY_MS        = 600;
+const AUTO_APPROVE_THRESHOLD = 0.80;
+const LOOKBACK_MONTHS        = 2;
+const MAX_ARTICLES           = 30;
+const EXTRACTION_BATCH_SIZE  = 10;
 
-// ─── Rate Limiter ──────────────────────────────────────────────────────────────
-// Free tier limits:
-//   OpenRouter free models:     ~10-20 RPM (we use 10 as safe floor)
-//   Gemini AI Studio (flash):   15 RPM, 1500 RPD
-// We enforce a global minimum gap of 5s between AI calls (~12 RPM max).
-const AI_MIN_GAP_MS       = 5000;    // minimum 5s between any two AI calls
-const AI_MAX_RETRIES      = 3;       // retries on 429 before switching provider
-const AI_RETRY_BASE_MS    = 5000;    // base delay for retry backoff: 5s, 10s, 20s
+const AI_MIN_GAP_MS    = 5000;
+const AI_MAX_RETRIES   = 3;
+const AI_RETRY_BASE_MS = 5000;
 
-let lastAICallTime        = 0;       // timestamp of last AI call
-let aiCallCount           = 0;       // total AI calls this run
-let openrouterCooldownEnd = 0;       // when to retry OpenRouter after cooldown
-let groqCooldownEnd       = 0;       // when to retry Groq after cooldown
-let geminiCooldownEnd     = 0;       // when to retry Gemini after cooldown
-let activeProvider        = null;    // tracks which provider answered last
+// ── Runtime State ────────────────────────────────────────────────────────────
 
-async function rateLimitedDelay() {
-    const now = Date.now();
-    const elapsed = now - lastAICallTime;
-    if (elapsed < AI_MIN_GAP_MS) {
-        await sleep(AI_MIN_GAP_MS - elapsed);
-    }
-    lastAICallTime = Date.now();
-    aiCallCount++;
-}
+let geminiModel          = null;
+let lastAICallTime       = 0;
+let aiCallCount          = 0;
+let openrouterCooldownEnd = 0;
+let groqCooldownEnd      = 0;
+let geminiCooldownEnd    = 0;
+let activeProvider       = null;
 
-// ─── Date helpers ──────────────────────────────────────────────────────────────
-const NOW          = new Date();
-const CURRENT_YEAR = NOW.getFullYear();
-const MONTHS_TO_SEARCH = [];
-for (let i = 0; i < LOOKBACK_MONTHS; i++) {
+const NOW = new Date();
+const MONTHS_TO_SEARCH = Array.from({ length: LOOKBACK_MONTHS }, (_, i) => {
     const d = new Date(NOW.getFullYear(), NOW.getMonth() - i, 1);
-    MONTHS_TO_SEARCH.push({
-        month: d.toLocaleString('en-US', { month: 'long' }),
-        year:  d.getFullYear()
-    });
-}
+    return { month: d.toLocaleString('en-US', { month: 'long' }), year: d.getFullYear() };
+});
 
-// ─── Trusted blog sources ──────────────────────────────────────────────────────
-// Top-5 get site-specific queries; the rest are covered by general queries
+// ── Data Tables ──────────────────────────────────────────────────────────────
+
 const PRIMARY_SITES = [
     'sethlui.com',
     'danielfooddiary.com',
     'eatbook.sg',
     '8days.sg',
-    'ladyironchef.com'
+    'ladyironchef.com',
 ];
 
-// Search intents (reduced from 4 to 2 — broader terms catch more)
 const SEARCH_INTENTS = [
     'new cafe OR new brunch',
-    'newly opened cafe OR best new coffee'
+    'newly opened cafe OR best new coffee',
 ];
 
-// ─── Full Singapore neighborhood list (matching schema) ────────────────────────
-// NOTE: Order matters — keyword matching stops at first match.
-//       More specific neighborhoods (e.g. Keong Saik) should come before broader ones.
+// Order matters — more specific neighborhoods must come before broader ones.
 const NEIGHBORHOOD_KEYWORDS = {
     'Tiong Bahru':     ['tiong bahru', 'seng poh', 'yong siak'],
     'Joo Chiat':       ['joo chiat', 'katong', 'east coast rd', 'e coast rd', 'still rd', 'dunman', 'tanjong katong'],
@@ -122,7 +85,7 @@ const NEIGHBORHOOD_KEYWORDS = {
                         'temple st', 'temple street', 'trengganu', 'smith st', 'kreta ayer', 'sago st',
                         'sago lane', 'banda st', 'jiak chuan', 'craig rd', 'craig road', 'eu tong sen'],
     'Everton Park':    ['everton park', 'everton rd', 'everton prk'],
-    'Holland Village':  ['holland village', 'holland v', 'chip bee', 'holland ave', 'holland dr'],
+    'Holland Village': ['holland village', 'holland v', 'chip bee', 'holland ave', 'holland dr'],
     'Jalan Besar':     ['jalan besar', 'lavender', 'tyrwhitt', 'french rd', 'french road',
                         'kitchener', 'hamilton rd', 'hamilton road', 'syed alwi'],
     'Siglap':          ['siglap', 'frankel', 'upper east coast'],
@@ -145,7 +108,6 @@ const NEIGHBORHOOD_KEYWORDS = {
     'Tampines':        ['tampines'],
     'Woodlands':       ['woodlands'],
     'Jurong':          ['jurong', 'jurong east', 'jurong west'],
-    // NOTE: 'changi' alone is too broad (matches "Changi Rd" which is in Paya Lebar area)
     'Changi':          ['changi airport', 'changi village', 'airport blvd', 'jewel changi', 'changi business'],
     'Thomson':         ['upper thomson', 'thomson rd', 'thomson road', 'sin ming'],
     'Paya Lebar':      ['paya lebar', 'geylang serai', 'sims ave', 'sims avenue', 'changi rd', 'changi road'],
@@ -158,23 +120,74 @@ const NEIGHBORHOOD_KEYWORDS = {
     'City Hall':       ['city hall', 'raffles place', 'marina bay', 'fullerton', 'raffles blvd'],
 };
 
-// ─── Category / rejection filters ──────────────────────────────────────────────
+const VALID_NEIGHBORHOODS = Object.keys(NEIGHBORHOOD_KEYWORDS);
+
+// Maps first 2 digits of a Singapore 6-digit postal code to a neighborhood.
+const POSTAL_SECTOR_MAP = {
+    '01': 'City Hall',      '02': 'City Hall',      '03': 'City Hall',
+    '04': 'City Hall',      '05': 'Keong Saik',     '06': 'Telok Ayer',
+    '07': 'Tanjong Pagar',  '08': 'Keong Saik',
+    '09': 'Sentosa',        '10': 'Sentosa',
+    '11': 'Clementi',       '12': 'Clementi',       '13': 'Clementi',
+    '14': 'Tiong Bahru',    '15': 'Tiong Bahru',    '16': 'Tiong Bahru',
+    '17': 'Bras Basah',     '18': 'Bras Basah',     '19': 'Bras Basah',
+    '20': 'Jalan Besar',    '21': 'Jalan Besar',
+    '22': 'Orchard',        '23': 'Robertson Quay',
+    '24': 'Orchard',        '25': 'Holland Village', '26': 'Holland Village',
+    '27': 'Bukit Timah',
+    '28': 'Novena',         '29': 'Novena',         '30': 'Novena',
+    '31': 'Toa Payoh',      '32': 'Toa Payoh',      '33': 'Toa Payoh',
+    '34': 'Paya Lebar',     '35': 'Paya Lebar',     '36': 'Paya Lebar',
+    '37': 'Kallang',
+    '38': 'Paya Lebar',     '39': 'Paya Lebar',     '40': 'Paya Lebar',
+    '41': 'Paya Lebar',
+    '42': 'Joo Chiat',      '43': 'Joo Chiat',      '44': 'Marine Parade',
+    '45': 'Marine Parade',
+    '46': 'Siglap',         '47': 'Bedok',          '48': 'Bedok',
+    '49': 'Changi',         '50': 'Changi',
+    '51': 'Tampines',       '52': 'Pasir Ris',
+    '53': 'Serangoon',      '54': 'Serangoon',      '55': 'Serangoon',
+    '56': 'Ang Mo Kio',     '57': 'Bishan',
+    '58': 'Bukit Timah',    '59': 'Bukit Timah',
+    '60': 'Clementi',       '61': 'Jurong',         '62': 'Jurong',
+    '63': 'Jurong',         '64': 'Jurong',
+    '65': 'Bukit Timah',    '66': 'Bukit Timah',    '67': 'Bukit Timah',
+    '68': 'Bukit Timah',
+    '69': 'Jurong',         '70': 'Jurong',         '71': 'Jurong',
+    '72': 'Woodlands',      '73': 'Woodlands',
+    '75': 'Woodlands',      '76': 'Woodlands',
+    '77': 'Thomson',        '78': 'Thomson',
+    '79': 'Thomson',        '80': 'Changi',
+    '81': 'Changi',         '82': 'Serangoon',
+};
+
 const ALLOWED_CATEGORIES = [
     'cafe', 'coffee shop', 'coffee', 'bakery', 'dessert shop', 'tea house',
     'espresso bar', 'brunch', 'breakfast', 'restaurant', 'sandwich shop',
-    'juice bar', 'ice cream', 'patisserie', 'bistro'
+    'juice bar', 'ice cream', 'patisserie', 'bistro',
 ];
 
 const REJECT_NAME_SIGNALS = [
     'steakhouse', 'seafood', 'sushi', 'ramen', 'hotpot', 'bbq',
     'buffet', 'hawker', 'fast food', 'kfc', 'mcdonald', 'subway',
     'nightclub', 'ktv', 'karaoke', 'pub', 'lounge', 'clinic',
-    'salon', 'spa', 'gym', 'hotel', 'hostel', 'laundry'
+    'salon', 'spa', 'gym', 'hotel', 'hostel', 'laundry',
 ];
 
-// ════════════════════════════════════════════════════════════════════════════════
-//  UTILITY HELPERS
-// ════════════════════════════════════════════════════════════════════════════════
+const BLOCKED_IMAGE_DOMAINS = [
+    'lookaside.fbsbx.com',
+    'lookaside.instagram.com',
+    'scontent.cdninstagram.com',
+    'scontent-',
+    'fbcdn.net',
+    'platform-lookaside',
+    'graph.facebook.com',
+    'pbs.twimg.com',
+    'encrypted-tbn',
+];
+
+// ── Utilities ────────────────────────────────────────────────────────────────
+
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 async function fetchWithTimeout(url, options, timeoutMs = REQUEST_TIMEOUT_MS, retries = REQUEST_RETRIES) {
@@ -195,7 +208,6 @@ async function fetchWithTimeout(url, options, timeoutMs = REQUEST_TIMEOUT_MS, re
     throw lastError;
 }
 
-/** Simple normalised Levenshtein similarity 0-1 */
 function similarity(a, b) {
     a = a.toLowerCase().trim();
     b = b.toLowerCase().trim();
@@ -245,92 +257,81 @@ function isFuzzyDuplicate(candidateName, existingNames) {
 function detectNeighborhood(address) {
     if (!address) return null;
     const lower = address.toLowerCase();
+
     for (const [name, keywords] of Object.entries(NEIGHBORHOOD_KEYWORDS)) {
         if (keywords.some(kw => lower.includes(kw))) return name;
     }
-    // Fallback: map Singapore postal code sector (first 2 digits) to neighborhood
-    // Reference: https://www.ura.gov.sg/property-market-information/pmiResearchPaperPdfDisplay?year=2024
+
     const postalMatch = address.match(/\b(\d{6})\b/);
     if (postalMatch) {
-        const postalMap = {
-            // D01: Raffles Place, Cecil, Marina, People's Park
-            '01': 'City Hall',      '02': 'City Hall',      '03': 'City Hall',
-            '04': 'City Hall',      '05': 'Keong Saik',     '06': 'Telok Ayer',
-            // D02: Anson, Tanjong Pagar
-            '07': 'Tanjong Pagar',  '08': 'Keong Saik',
-            // D04: Telok Blangah, Harbourfront
-            '09': 'Sentosa',        '10': 'Sentosa',
-            // D05: Pasir Panjang, Clementi
-            '11': 'Clementi',       '12': 'Clementi',       '13': 'Clementi',
-            // D03: Queenstown, Tiong Bahru
-            '14': 'Tiong Bahru',    '15': 'Tiong Bahru',    '16': 'Tiong Bahru',
-            // D06-D07: Beach Road, Bugis, Golden Mile
-            '17': 'Bras Basah',     '18': 'Bras Basah',     '19': 'Bras Basah',
-            // D08: Little India
-            '20': 'Jalan Besar',    '21': 'Jalan Besar',
-            // D09: Orchard, River Valley
-            '22': 'Orchard',        '23': 'Robertson Quay',
-            // D10: Ardmore, Bukit Timah, Holland Road, Tanglin
-            '24': 'Orchard',        '25': 'Holland Village', '26': 'Holland Village',
-            '27': 'Bukit Timah',
-            // D11: Novena, Watten Estate, Thomson
-            '28': 'Novena',         '29': 'Novena',         '30': 'Novena',
-            // D12: Balestier, Toa Payoh
-            '31': 'Toa Payoh',      '32': 'Toa Payoh',      '33': 'Toa Payoh',
-            // D13: Macpherson, Braddell
-            '34': 'Paya Lebar',     '35': 'Paya Lebar',     '36': 'Paya Lebar',
-            '37': 'Kallang',
-            // D14: Geylang, Eunos
-            '38': 'Paya Lebar',     '39': 'Paya Lebar',     '40': 'Paya Lebar',
-            '41': 'Paya Lebar',
-            // D15: Katong, Joo Chiat, Marine Parade
-            '42': 'Joo Chiat',      '43': 'Joo Chiat',      '44': 'Marine Parade',
-            '45': 'Marine Parade',
-            // D16: Bedok, Upper East Coast, Siglap
-            '46': 'Siglap',         '47': 'Bedok',          '48': 'Bedok',
-            // D17: Changi, Loyang
-            '49': 'Changi',         '50': 'Changi',
-            // D18: Tampines, Pasir Ris
-            '51': 'Tampines',       '52': 'Pasir Ris',
-            // D19: Serangoon Garden, Hougang, Punggol
-            '53': 'Serangoon',      '54': 'Serangoon',      '55': 'Serangoon',
-            // D20: Bishan, Ang Mo Kio
-            '56': 'Ang Mo Kio',     '57': 'Bishan',
-            // D21: Upper Bukit Timah, Clementi Park
-            '58': 'Bukit Timah',    '59': 'Bukit Timah',
-            // D22: Jurong
-            '60': 'Clementi',       '61': 'Jurong',         '62': 'Jurong',
-            '63': 'Jurong',         '64': 'Jurong',
-            // D23: Hillview, Bukit Panjang, Choa Chu Kang
-            '65': 'Bukit Timah',    '66': 'Bukit Timah',    '67': 'Bukit Timah',
-            '68': 'Bukit Timah',
-            // D24: Lim Chu Kang, Tengah
-            '69': 'Jurong',         '70': 'Jurong',         '71': 'Jurong',
-            // D25: Kranji, Woodgrove
-            '72': 'Woodlands',      '73': 'Woodlands',
-            // D27: Yishun, Sembawang
-            '75': 'Woodlands',      '76': 'Woodlands',
-            // D26: Upper Thomson, Springleaf
-            '77': 'Thomson',        '78': 'Thomson',
-            // D28: Seletar
-            '79': 'Thomson',        '80': 'Changi',
-            // Additional sectors
-            '81': 'Changi',         '82': 'Serangoon',
-        };
-        const sectorStr = postalMatch[1].substring(0, 2);
-        if (postalMap[sectorStr]) return postalMap[sectorStr];
+        const sector = postalMatch[1].substring(0, 2);
+        if (POSTAL_SECTOR_MAP[sector]) return POSTAL_SECTOR_MAP[sector];
     }
+
     return null;
 }
 
-// ════════════════════════════════════════════════════════════════════════════════
-//  AI PROVIDER LAYER (OpenRouter primary, Gemini fallback, RPM-aware)
-// ════════════════════════════════════════════════════════════════════════════════
+function isValidImageUrl(url) {
+    if (!url || !url.startsWith('https://')) return false;
+    const lower = url.toLowerCase();
+    if (BLOCKED_IMAGE_DOMAINS.some(d => lower.includes(d))) return false;
+    if (lower.includes('placeholder') || lower.includes('no-image') || lower.includes('default-avatar')) return false;
+    if (lower.includes('logo') || lower.includes('icon') || lower.includes('favicon')) return false;
+    const hasImageExt = /\.(jpg|jpeg|png|webp|gif|avif)/i.test(lower);
+    const isKnownCDN = ['wp-content', 'cloudinary', 'imgix', 'supabase'].some(cdn => lower.includes(cdn));
+    return hasImageExt || isKnownCDN;
+}
 
-/** Try OpenRouter. Returns content string or null on rate-limit. Throws on other errors. */
+// ── Console Capture ──────────────────────────────────────────────────────────
+// Mirrors all output to a buffer so the full log can be saved to the DB.
+
+const _consoleBuffer = [];
+const _origLog  = console.log.bind(console);
+const _origErr  = console.error.bind(console);
+const _origWarn = console.warn.bind(console);
+
+function captureConsole() {
+    console.log = (...args) => {
+        _consoleBuffer.push(args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' '));
+        _origLog(...args);
+    };
+    console.error = (...args) => {
+        _consoleBuffer.push('[ERROR] ' + args.map(a => typeof a === 'string' ? a : (a?.stack || JSON.stringify(a))).join(' '));
+        _origErr(...args);
+    };
+    console.warn = (...args) => {
+        _consoleBuffer.push('[WARN] ' + args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' '));
+        _origWarn(...args);
+    };
+}
+
+function getConsoleLog() {
+    const full = _consoleBuffer.join('\n');
+    return full.length > 50000 ? full.slice(-50000) : full;
+}
+
+// ── AI Provider Layer ────────────────────────────────────────────────────────
+// Provider chain: OpenRouter → Groq → Gemini.
+// Each provider retries on 429 with exponential backoff, then enters a cooldown
+// period before the next provider is tried. If all are cooling down, we wait.
+
+function getGeminiModel() {
+    if (!geminiModel && GEMINI_API_KEY) {
+        const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+        geminiModel = genAI.getGenerativeModel({ model: GEMINI_MODEL });
+    }
+    return geminiModel;
+}
+
+async function rateLimitedDelay() {
+    const elapsed = Date.now() - lastAICallTime;
+    if (elapsed < AI_MIN_GAP_MS) await sleep(AI_MIN_GAP_MS - elapsed);
+    lastAICallTime = Date.now();
+    aiCallCount++;
+}
+
 async function tryOpenRouter(messages, temperature, maxTokens) {
-    if (!OPENROUTER_API_KEY) return null;
-    if (Date.now() < openrouterCooldownEnd) return null;
+    if (!OPENROUTER_API_KEY || Date.now() < openrouterCooldownEnd) return null;
 
     for (let attempt = 0; attempt <= AI_MAX_RETRIES; attempt++) {
         try {
@@ -340,14 +341,9 @@ async function tryOpenRouter(messages, temperature, maxTokens) {
                     'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
                     'Content-Type': 'application/json',
                     'HTTP-Referer': 'https://sgmakan.vercel.app',
-                    'X-Title': 'SGMakan Cafe Curator'
+                    'X-Title': 'SGMakan Cafe Curator',
                 },
-                body: JSON.stringify({
-                    model: OPENROUTER_MODEL,
-                    messages,
-                    temperature,
-                    max_tokens: maxTokens
-                })
+                body: JSON.stringify({ model: OPENROUTER_MODEL, messages, temperature, max_tokens: maxTokens }),
             });
 
             if (res.ok) {
@@ -359,32 +355,28 @@ async function tryOpenRouter(messages, temperature, maxTokens) {
             if (res.status === 429) {
                 if (attempt < AI_MAX_RETRIES) {
                     const delay = AI_RETRY_BASE_MS * Math.pow(2, attempt);
-                    console.log(`   [OpenRouter] 429 rate limit, retry in ${(delay / 1000).toFixed(0)}s (${attempt + 1}/${AI_MAX_RETRIES})...`);
+                    console.log(`   [OpenRouter] 429, retry in ${(delay / 1000).toFixed(0)}s (${attempt + 1}/${AI_MAX_RETRIES})...`);
                     await sleep(delay);
                     continue;
                 }
-                // Exhausted retries — cooldown for 2 minutes
                 console.log('   [OpenRouter] Rate limit exhausted, cooldown 120s...');
                 openrouterCooldownEnd = Date.now() + 120000;
                 return null;
             }
 
-            // Other HTTP error — don't retry, throw
             const errText = await res.text();
             throw new Error(`OpenRouter ${res.status}: ${errText.substring(0, 200)}`);
         } catch (err) {
             if (err.message?.startsWith('OpenRouter')) throw err;
-            if (attempt === AI_MAX_RETRIES) return null; // network error, fall to Gemini
+            if (attempt === AI_MAX_RETRIES) return null;
             await sleep(AI_RETRY_BASE_MS);
         }
     }
     return null;
 }
 
-/** Try Groq. Returns content string or null on rate-limit. OpenAI-compatible API. */
 async function tryGroq(messages, temperature, maxTokens) {
-    if (!GROQ_API_KEY) return null;
-    if (Date.now() < groqCooldownEnd) return null;
+    if (!GROQ_API_KEY || Date.now() < groqCooldownEnd) return null;
 
     for (let attempt = 0; attempt <= AI_MAX_RETRIES; attempt++) {
         try {
@@ -392,14 +384,9 @@ async function tryGroq(messages, temperature, maxTokens) {
                 method: 'POST',
                 headers: {
                     'Authorization': `Bearer ${GROQ_API_KEY}`,
-                    'Content-Type': 'application/json'
+                    'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({
-                    model: GROQ_MODEL,
-                    messages,
-                    temperature,
-                    max_tokens: maxTokens
-                })
+                body: JSON.stringify({ model: GROQ_MODEL, messages, temperature, max_tokens: maxTokens }),
             });
 
             if (res.ok) {
@@ -409,11 +396,10 @@ async function tryGroq(messages, temperature, maxTokens) {
             }
 
             if (res.status === 429) {
-                // Extract retry-after header if available
                 const retryAfter = res.headers?.get?.('retry-after');
                 if (attempt < AI_MAX_RETRIES) {
                     const delay = retryAfter ? parseInt(retryAfter) * 1000 : AI_RETRY_BASE_MS * Math.pow(2, attempt);
-                    console.log(`   [Groq] 429 rate limit, retry in ${(delay / 1000).toFixed(0)}s (${attempt + 1}/${AI_MAX_RETRIES})...`);
+                    console.log(`   [Groq] 429, retry in ${(delay / 1000).toFixed(0)}s (${attempt + 1}/${AI_MAX_RETRIES})...`);
                     await sleep(delay);
                     continue;
                 }
@@ -433,11 +419,8 @@ async function tryGroq(messages, temperature, maxTokens) {
     return null;
 }
 
-/** Try Gemini. Returns content string or throws. */
 async function tryGemini(messages, temperature, maxTokens) {
-    if (!GEMINI_API_KEY) return null;
-    if (Date.now() < geminiCooldownEnd) return null;
-
+    if (!GEMINI_API_KEY || Date.now() < geminiCooldownEnd) return null;
     const model = getGeminiModel();
     if (!model) return null;
 
@@ -446,64 +429,50 @@ async function tryGemini(messages, temperature, maxTokens) {
     try {
         const result = await model.generateContent({
             contents: [{ role: 'user', parts: [{ text: prompt }] }],
-            generationConfig: { temperature, maxOutputTokens: maxTokens }
+            generationConfig: { temperature, maxOutputTokens: maxTokens },
         });
-
         activeProvider = 'gemini';
         return result.response?.text?.() || result.response?.candidates?.[0]?.content?.parts?.[0]?.text || '';
     } catch (err) {
         const errMsg = err.message || String(err);
-        // Gemini 429 / quota — extract retry delay if available
+
         if (err.status === 429 || errMsg.includes('429') || errMsg.includes('RESOURCE_EXHAUSTED') || errMsg.includes('quota')) {
-            // Try to extract retryDelay from Gemini's error details
-            let cooldownMs = 60000; // default 60s
+            let cooldownMs = 60000;
             const retryMatch = errMsg.match(/retry in ([\d.]+)s/i);
-            if (retryMatch) {
-                cooldownMs = Math.ceil(parseFloat(retryMatch[1]) * 1000) + 2000; // +2s buffer
-            }
-            // If limit is 0, it's a daily quota — longer cooldown
+            if (retryMatch) cooldownMs = Math.ceil(parseFloat(retryMatch[1]) * 1000) + 2000;
+
             if (errMsg.includes('limit: 0')) {
-                cooldownMs = 300000; // 5 minutes — daily quota likely exhausted
-                console.log(`   [Gemini] Daily quota exhausted, cooldown 5min`);
+                cooldownMs = 300000;
+                console.log('   [Gemini] Daily quota exhausted, cooldown 5min');
             } else {
                 console.log(`   [Gemini] Rate limited, cooldown ${(cooldownMs / 1000).toFixed(0)}s`);
             }
             geminiCooldownEnd = Date.now() + cooldownMs;
             return null;
         }
-        // Non-rate-limit error
+
         console.log(`   [Gemini] Error: ${errMsg.substring(0, 150)}`);
         throw new Error(`Gemini error: ${errMsg.substring(0, 200)}`);
     }
 }
 
-/**
- * Unified AI caller with rate limiting.
- * Provider chain: OpenRouter → Groq → Gemini.
- * If all are in cooldown, WAITS for the earliest one to become available.
- */
 async function callAI(messages, { temperature = 0.3, maxTokens = 2000 } = {}) {
     await rateLimitedDelay();
 
-    // Check cooldown status for all providers
     const now = Date.now();
     const providers = [
         { name: 'OpenRouter', key: OPENROUTER_API_KEY, cooldownEnd: openrouterCooldownEnd },
         { name: 'Groq',       key: GROQ_API_KEY,       cooldownEnd: groqCooldownEnd },
-        { name: 'Gemini',     key: GEMINI_API_KEY,      cooldownEnd: geminiCooldownEnd }
+        { name: 'Gemini',     key: GEMINI_API_KEY,      cooldownEnd: geminiCooldownEnd },
     ];
-
     const configured = providers.filter(p => p.key);
-    const allCooling = configured.length > 0 && configured.every(p => p.cooldownEnd > now);
 
-    if (allCooling) {
-        const earliest = Math.min(...configured.map(p => p.cooldownEnd));
-        const waitMs = earliest - now;
+    if (configured.length > 0 && configured.every(p => p.cooldownEnd > now)) {
+        const waitMs = Math.min(...configured.map(p => p.cooldownEnd)) - now;
         console.log(`   All providers cooling down, waiting ${(waitMs / 1000).toFixed(0)}s...`);
         await sleep(waitMs + 1000);
     }
 
-    // Try providers in order: OpenRouter → Groq → Gemini
     const orResult = await tryOpenRouter(messages, temperature, maxTokens);
     if (orResult !== null) return orResult;
 
@@ -516,12 +485,104 @@ async function callAI(messages, { temperature = 0.3, maxTokens = 2000 } = {}) {
     throw new Error('All AI providers failed (check API keys and quota)');
 }
 
-// ════════════════════════════════════════════════════════════════════════════════
-//  STAGE 1 — DISCOVER (Serper web search, capped & efficient)
-// ════════════════════════════════════════════════════════════════════════════════
+// ── Database Helpers ─────────────────────────────────────────────────────────
+
+async function getExistingCafeTitles() {
+    const titles = new Set();
+    const [cafesRes, pendingRes] = await Promise.all([
+        supabase.from('cafes').select('title'),
+        supabase.from('pending_cafes').select('title').eq('status', 'pending'),
+    ]);
+    for (const c of (cafesRes.data || [])) titles.add(c.title.toLowerCase());
+    for (const p of (pendingRes.data || [])) titles.add(p.title.toLowerCase());
+    return titles;
+}
+
+async function getOrCreateNeighborhood(name) {
+    const { data } = await supabase.from('neighborhoods').select('neighborhood_id').eq('name', name).single();
+    if (data) return data.neighborhood_id;
+    const { data: created } = await supabase.from('neighborhoods').insert({ name }).select('neighborhood_id').single();
+    return created?.neighborhood_id || null;
+}
+
+async function logPipelineStart() {
+    try {
+        const { data } = await supabase.from('ai_pipeline_log').insert({
+            pipeline_type: 'discovery',
+            status: 'running',
+            started_at: new Date().toISOString(),
+        }).select('log_id').single();
+        return data?.log_id;
+    } catch { return null; }
+}
+
+async function logPipelineEnd(logId, status, stats) {
+    if (!logId) return;
+    try {
+        await supabase.from('ai_pipeline_log').update({
+            status,
+            cafes_found: stats.discovered || 0,
+            cafes_verified: (stats.auto_approved || 0) + (stats.pending_review || 0),
+            cafes_failed: stats.rejected || 0,
+            completed_at: new Date().toISOString(),
+            error_message: stats.error || null,
+            details: JSON.stringify({ ...stats, ai_calls: aiCallCount, console_log: getConsoleLog() }),
+        }).eq('log_id', logId);
+    } catch {}
+}
+
+// ── Serper API Helpers ───────────────────────────────────────────────────────
+
+async function searchSerper(query) {
+    const res = await fetchWithTimeout('https://google.serper.dev/search', {
+        method: 'POST',
+        headers: { 'X-API-KEY': SERPER_API_KEY, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ q: query, gl: 'sg', num: 5 }),
+    });
+    return res.json();
+}
+
+async function lookupPlace(name) {
+    const res = await fetchWithTimeout('https://google.serper.dev/places', {
+        method: 'POST',
+        headers: { 'X-API-KEY': SERPER_API_KEY, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ q: `${name} cafe Singapore`, gl: 'sg' }),
+    });
+    return res.json();
+}
+
+async function searchCafeImage(cafeName) {
+    const queries = [
+        `${cafeName} cafe Singapore interior`,
+        `${cafeName} cafe Singapore`,
+        `${cafeName} Singapore`,
+    ];
+
+    for (const query of queries) {
+        try {
+            const res = await fetchWithTimeout('https://google.serper.dev/images', {
+                method: 'POST',
+                headers: { 'X-API-KEY': SERPER_API_KEY, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ q: query, gl: 'sg', num: 10 }),
+            });
+            const data = await res.json();
+            if (data.images) {
+                for (const img of data.images) {
+                    if (isValidImageUrl(img.imageUrl)) return img.imageUrl;
+                }
+            }
+        } catch {}
+        await sleep(SERPER_DELAY_MS);
+    }
+
+    console.log(`   [Image] No valid image found for "${cafeName}"`);
+    return null;
+}
+
+// ── Stage 1: Discover ────────────────────────────────────────────────────────
+
 function buildSearchQueries() {
     const queries = [];
-    // Site-specific: top-5 blogs × 2 intents × 2 months = 20
     for (const site of PRIMARY_SITES) {
         for (const intent of SEARCH_INTENTS) {
             for (const { month, year } of MONTHS_TO_SEARCH) {
@@ -529,22 +590,12 @@ function buildSearchQueries() {
             }
         }
     }
-    // General search (no site): 2 intents × 2 months = 4
     for (const intent of SEARCH_INTENTS) {
         for (const { month, year } of MONTHS_TO_SEARCH) {
             queries.push(`${intent} singapore ${month} ${year}`);
         }
     }
-    return queries; // ~24 total
-}
-
-async function searchSerper(query) {
-    const res = await fetchWithTimeout('https://google.serper.dev/search', {
-        method: 'POST',
-        headers: { 'X-API-KEY': SERPER_API_KEY, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ q: query, gl: 'sg', num: 5 })
-    });
-    return res.json();
+    return queries;
 }
 
 function isRecentResult(result) {
@@ -571,18 +622,11 @@ async function stage1_discover() {
             if (data.organic) {
                 for (const result of data.organic) {
                     if (isRecentResult(result)) {
-                        rawResults.push({
-                            title: result.title,
-                            snippet: result.snippet || '',
-                            link: result.link,
-                            date: result.date || null
-                        });
+                        rawResults.push({ title: result.title, snippet: result.snippet || '', link: result.link, date: result.date || null });
                     }
                 }
             }
-        } catch (err) {
-            // Silently skip failed queries
-        }
+        } catch {}
         searched++;
         if (searched % 5 === 0) console.log(`   Searched ${searched}/${queries.length}...`);
         await sleep(SERPER_DELAY_MS);
@@ -603,9 +647,8 @@ async function stage1_discover() {
     return articles;
 }
 
-// ════════════════════════════════════════════════════════════════════════════════
-//  STAGE 2 — EXTRACT (AI pulls cafe names from articles, large batches)
-// ════════════════════════════════════════════════════════════════════════════════
+// ── Stage 2: Extract ─────────────────────────────────────────────────────────
+
 async function stage2_extract(articles) {
     console.log('STAGE 2: Extracting cafe names with AI...');
 
@@ -616,9 +659,7 @@ async function stage2_extract(articles) {
     for (let i = 0; i < articles.length; i += EXTRACTION_BATCH_SIZE) {
         const batch = articles.slice(i, i + EXTRACTION_BATCH_SIZE);
         const batchNum = Math.floor(i / EXTRACTION_BATCH_SIZE) + 1;
-        const batchText = batch.map((a, idx) =>
-            `[${idx + 1}] ${a.title}\n${a.snippet}`
-        ).join('\n\n');
+        const batchText = batch.map((a, idx) => `[${idx + 1}] ${a.title}\n${a.snippet}`).join('\n\n');
 
         const prompt = `You are a Singapore cafe data extractor. Extract ONLY the names of cafes, coffee shops, or brunch spots mentioned in these article snippets.
 
@@ -642,13 +683,9 @@ ${batchText}`;
                     if (typeof name !== 'string' || name.length < 2 || name.length > 80) continue;
                     const key = name.toLowerCase().trim();
                     if (!allCandidates.has(key)) {
-                        allCandidates.set(key, {
-                            name: name.trim(),
-                            sources: batch.map(a => ({ url: a.link, title: a.title }))
-                        });
+                        allCandidates.set(key, { name: name.trim(), sources: batch.map(a => ({ url: a.link, title: a.title })) });
                     } else {
-                        const existing = allCandidates.get(key);
-                        existing.sources.push(...batch.map(a => ({ url: a.link, title: a.title })));
+                        allCandidates.get(key).sources.push(...batch.map(a => ({ url: a.link, title: a.title })));
                     }
                 }
             }
@@ -662,17 +699,7 @@ ${batchText}`;
     return allCandidates;
 }
 
-// ════════════════════════════════════════════════════════════════════════════════
-//  STAGE 3 — VERIFY (Google Places + fuzzy dedup + AI judge)
-// ════════════════════════════════════════════════════════════════════════════════
-async function lookupPlace(name) {
-    const res = await fetchWithTimeout('https://google.serper.dev/places', {
-        method: 'POST',
-        headers: { 'X-API-KEY': SERPER_API_KEY, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ q: `${name} cafe Singapore`, gl: 'sg' })
-    });
-    return res.json();
-}
+// ── Stage 3: Verify ──────────────────────────────────────────────────────────
 
 async function aiJudge(candidateName, placeData, sourceSnippets) {
     const prompt = `You are a strict cafe reviewer for a Singapore cafe discovery app.
@@ -705,7 +732,6 @@ async function stage3_verify(candidates, existingTitles) {
     for (const [, candidate] of candidates) {
         const { name, sources } = candidate;
 
-        // 3a. Fuzzy duplicate check (no API call needed)
         const dupMatch = isFuzzyDuplicate(name, existingTitles);
         if (dupMatch) {
             console.log(`   SKIP (dup of "${dupMatch}"): ${name}`);
@@ -713,7 +739,6 @@ async function stage3_verify(candidates, existingTitles) {
             continue;
         }
 
-        // 3b. Google Places lookup (Serper, not AI)
         let placeData;
         try {
             const data = await lookupPlace(name);
@@ -724,13 +749,12 @@ async function stage3_verify(candidates, existingTitles) {
                 continue;
             }
             placeData = data.places[0];
-        } catch (err) {
+        } catch {
             console.log(`   REJECT (Places failed): ${name}`);
             stats.rejected++;
             continue;
         }
 
-        // 3c. Quick filters (no AI call needed)
         const lowerTitle = placeData.title.toLowerCase();
 
         if (lowerTitle.includes('permanently closed') || lowerTitle.includes('temporarily closed')) {
@@ -765,11 +789,10 @@ async function stage3_verify(candidates, existingTitles) {
             continue;
         }
 
-        // 3d. AI judge (1 AI call)
         const sourceSnippets = sources.map(s => s.title).join(' | ');
         const judgement = await aiJudge(name, placeData, sourceSnippets);
 
-        let confidence = 0.5; // default if AI judge fails
+        let confidence = 0.5;
         if (judgement) {
             if (!judgement.is_cafe || !judgement.is_singapore || !judgement.is_open || !judgement.name_match) {
                 console.log(`   REJECT (AI: ${judgement.reason}): ${name}`);
@@ -779,7 +802,6 @@ async function stage3_verify(candidates, existingTitles) {
             confidence = judgement.confidence || 0.5;
         }
 
-        // Boost for multi-source mentions
         const uniqueSources = new Set(sources.map(s => s.url)).size;
         if (uniqueSources >= 3) confidence = Math.min(1.0, confidence + 0.1);
         if (uniqueSources >= 5) confidence = Math.min(1.0, confidence + 0.05);
@@ -797,7 +819,7 @@ async function stage3_verify(candidates, existingTitles) {
             category: placeData.category || 'Cafe',
             confidence,
             sourceUrls: [...new Set(sources.map(s => s.url))].slice(0, 3),
-            sourceTitles: [...new Set(sources.map(s => s.title))].slice(0, 3)
+            sourceTitles: [...new Set(sources.map(s => s.title))].slice(0, 3),
         });
 
         existingTitles.add(placeData.title.toLowerCase());
@@ -808,11 +830,8 @@ async function stage3_verify(candidates, existingTitles) {
     return { verified, stats };
 }
 
-// ════════════════════════════════════════════════════════════════════════════════
-//  STAGE 4 — ENRICH & STORE (1 combined AI call per cafe + 1 image search)
-// ════════════════════════════════════════════════════════════════════════════════
+// ── Stage 4: Enrich & Store ──────────────────────────────────────────────────
 
-/** Single AI call that returns description + vibe + tags + MRT for one cafe */
 async function enrichWithAI(cafe) {
     const prompt = `You are enriching a cafe listing for a Singapore cafe discovery app.
 
@@ -826,71 +845,32 @@ Return ONLY a JSON object (no markdown, no code blocks):
   "description": "2-3 sentence description of this cafe. Focus on vibe and what makes it special. Be factual, no emojis.",
   "vibe": "exactly ONE word from: cozy, industrial, minimalist, artsy, rustic, zen, chic, bustling, romantic, vintage, modern, tropical",
   "tags": ["2-3 tags from: specialty coffee, brunch, bakery, roaster, aesthetic, halal-friendly, pet-friendly, workspace, desserts, matcha, pastries, sourdough"],
-  "mrt": "Nearest MRT station in format: Station Name (LINE_CODE) e.g. Tiong Bahru (EW17). If unsure, use null"
+  "mrt": "Nearest MRT station in format: Station Name (LINE_CODE) e.g. Tiong Bahru (EW17). If unsure, use null",
+  "neighborhood": "The Singapore neighborhood/area this cafe is in. Must be exactly ONE of: ${VALID_NEIGHBORHOODS.join(', ')}. Pick the closest match based on the address. If truly none fit, use null"
 }`;
 
     try {
-        const content = await callAI([{ role: 'user', content: prompt }], { temperature: 0.4, maxTokens: 500 });
+        const content = await callAI([{ role: 'user', content: prompt }], { temperature: 0.4, maxTokens: 600 });
         const match = content.match(/\{[\s\S]*\}/);
         if (match) {
             const parsed = JSON.parse(match[0]);
             const validVibes = ['cozy', 'industrial', 'minimalist', 'artsy', 'rustic', 'zen', 'chic', 'bustling', 'romantic', 'vintage', 'modern', 'tropical'];
+            const aiNeighborhood = (parsed.neighborhood && parsed.neighborhood !== 'null')
+                ? VALID_NEIGHBORHOODS.find(n => n.toLowerCase() === parsed.neighborhood.toLowerCase())
+                : null;
             return {
                 description: parsed.description || `A cafe in Singapore at ${cafe.address}.`,
                 vibe: validVibes.includes(parsed.vibe?.toLowerCase()) ? parsed.vibe.toLowerCase() : 'cozy',
-                tags: Array.isArray(parsed.tags) ? parsed.tags : ['new'],
-                mrt: (parsed.mrt && parsed.mrt !== 'null' && parsed.mrt.length < 60) ? parsed.mrt : null
+                tags: Array.isArray(parsed.tags) ? parsed.tags : [],
+                mrt: (parsed.mrt && parsed.mrt !== 'null' && parsed.mrt.length < 60) ? parsed.mrt : null,
+                neighborhood: aiNeighborhood,
             };
         }
     } catch (err) {
         console.log(`   Enrichment AI error: ${err.message.substring(0, 60)}`);
     }
 
-    return {
-        description: `A cafe in Singapore located at ${cafe.address}.`,
-        vibe: 'cozy',
-        tags: ['new'],
-        mrt: null
-    };
-}
-
-const BLOCKED_IMAGE_DOMAINS = [
-    'lookaside.fbsbx.com',
-    'lookaside.instagram.com',
-    'scontent.cdninstagram.com',
-    'scontent-',              
-    'fbcdn.net',
-    'platform-lookaside',
-    'graph.facebook.com',
-    'pbs.twimg.com',           
-    'encrypted-tbn',           
-];
-
-function isValidImageUrl(url) {
-    if (!url || !url.startsWith('https://')) return false;
-    const lower = url.toLowerCase();
-    if (BLOCKED_IMAGE_DOMAINS.some(d => lower.includes(d))) return false;
-    if (lower.includes('placeholder') || lower.includes('no-image') || lower.includes('default-avatar')) return false;
-    const hasImageExt = /\.(jpg|jpeg|png|webp|gif|avif)/i.test(lower);
-    const isKnownCDN = lower.includes('wp-content') || lower.includes('cloudinary') || lower.includes('imgix') || lower.includes('supabase');
-    return hasImageExt || isKnownCDN;
-}
-
-async function searchCafeImage(cafeName) {
-    try {
-        const res = await fetchWithTimeout('https://google.serper.dev/images', {
-            method: 'POST',
-            headers: { 'X-API-KEY': SERPER_API_KEY, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ q: `${cafeName} cafe Singapore interior`, gl: 'sg', num: 5 })
-        });
-        const data = await res.json();
-        if (data.images) {
-            for (const img of data.images) {
-                if (isValidImageUrl(img.imageUrl)) return img.imageUrl;
-            }
-        }
-    } catch {}
-    return null;
+    return { description: `A cafe in Singapore located at ${cafe.address}.`, vibe: 'cozy', tags: [], mrt: null, neighborhood: null };
 }
 
 async function stage4_enrich_and_store(verifiedCafes) {
@@ -899,52 +879,49 @@ async function stage4_enrich_and_store(verifiedCafes) {
 
     for (const cafe of verifiedCafes) {
         try {
-            // 1 AI call for description + vibe + tags + MRT (sequential, rate-limited)
             const enrichment = await enrichWithAI(cafe);
-
-            // 1 Serper call for image (not an AI call, no rate limit needed)
             const imageUrl = await searchCafeImage(cafe.name);
-            await sleep(SERPER_DELAY_MS);
 
-            const neighborhood = detectNeighborhood(cafe.address);
-            const neighborhoodId = neighborhood ? await getOrCreateNeighborhood(neighborhood) : null;
-            const finalTags = [...new Set([...(enrichment.tags), 'new', 'verified'])];
+            const keywordNeighborhood = detectNeighborhood(cafe.address);
+            const finalNeighborhood = keywordNeighborhood || enrichment.neighborhood;
+            if (!keywordNeighborhood && enrichment.neighborhood) {
+                console.log(`   [Neighborhood] AI fallback → "${enrichment.neighborhood}" for ${cafe.name}`);
+            }
 
-            if (cafe.confidence >= AUTO_APPROVE_THRESHOLD) {
+            const neighborhoodId = finalNeighborhood ? await getOrCreateNeighborhood(finalNeighborhood) : null;
+            if (!neighborhoodId) {
+                console.log(`   [Neighborhood] WARNING: No neighborhood resolved for ${cafe.name} (${cafe.address})`);
+            }
+
+            const tags = [...new Set(enrichment.tags)];
+            const hasImage = !!imageUrl;
+            const hasNeighborhood = !!neighborhoodId;
+            const isComplete = hasImage && hasNeighborhood && cafe.confidence >= AUTO_APPROVE_THRESHOLD;
+
+            if (isComplete) {
                 const { error } = await supabase.from('cafes').insert({
-                    title: cafe.name,
-                    neighborhood_id: neighborhoodId,
-                    location: cafe.address,
-                    rating: cafe.rating,
-                    price: cafe.price,
-                    mrt: enrichment.mrt,
-                    vibe: enrichment.vibe,
-                    tags: finalTags,
-                    description: enrichment.description,
-                    image_url: imageUrl,
-                    source: 'ai',
-                    is_active: true
+                    title: cafe.name, neighborhood_id: neighborhoodId, location: cafe.address,
+                    rating: cafe.rating, price: cafe.price, mrt: enrichment.mrt,
+                    vibe: enrichment.vibe, tags, description: enrichment.description,
+                    image_url: imageUrl, source: 'ai', is_active: true,
                 });
                 if (error) throw error;
-                console.log(`   AUTO-APPROVED (${(cafe.confidence * 100).toFixed(0)}%) [${activeProvider}]: ${cafe.name}`);
+                console.log(`   AUTO-APPROVED (${(cafe.confidence * 100).toFixed(0)}%) [${activeProvider}]: ${cafe.name} → ${finalNeighborhood}`);
                 results.auto_approved++;
             } else {
+                const reasons = [];
+                if (!hasImage) reasons.push('no image');
+                if (!hasNeighborhood) reasons.push('no neighborhood');
+                if (cafe.confidence < AUTO_APPROVE_THRESHOLD) reasons.push('low confidence');
+
                 const { error } = await supabase.from('pending_cafes').insert({
-                    title: cafe.name,
-                    neighborhood_id: neighborhoodId,
-                    location: cafe.address,
-                    rating: cafe.rating,
-                    price: cafe.price,
-                    mrt: enrichment.mrt,
-                    vibe: enrichment.vibe,
-                    tags: finalTags,
-                    description: enrichment.description,
-                    image_url: imageUrl,
-                    ai_confidence: cafe.confidence,
-                    status: 'pending'
+                    title: cafe.name, neighborhood_id: neighborhoodId, location: cafe.address,
+                    rating: cafe.rating, price: cafe.price, mrt: enrichment.mrt,
+                    vibe: enrichment.vibe, tags, description: enrichment.description,
+                    image_url: imageUrl, ai_confidence: cafe.confidence, status: 'pending',
                 });
                 if (error) throw error;
-                console.log(`   PENDING (${(cafe.confidence * 100).toFixed(0)}%) [${activeProvider}]: ${cafe.name}`);
+                console.log(`   PENDING (${(cafe.confidence * 100).toFixed(0)}%, ${reasons.join(' + ')}) [${activeProvider}]: ${cafe.name}`);
                 results.pending_review++;
             }
         } catch (err) {
@@ -957,136 +934,47 @@ async function stage4_enrich_and_store(verifiedCafes) {
     return results;
 }
 
-// ════════════════════════════════════════════════════════════════════════════════
-//  DATABASE HELPERS
-// ════════════════════════════════════════════════════════════════════════════════
-async function getExistingCafeTitles() {
-    const titles = new Set();
-    const [cafesRes, pendingRes] = await Promise.all([
-        supabase.from('cafes').select('title'),
-        supabase.from('pending_cafes').select('title').eq('status', 'pending')
-    ]);
-    for (const c of (cafesRes.data || [])) titles.add(c.title.toLowerCase());
-    for (const p of (pendingRes.data || [])) titles.add(p.title.toLowerCase());
-    return titles;
-}
+// ── Main ─────────────────────────────────────────────────────────────────────
 
-async function getOrCreateNeighborhood(name) {
-    const { data } = await supabase.from('neighborhoods').select('neighborhood_id').eq('name', name).single();
-    if (data) return data.neighborhood_id;
-    const { data: created } = await supabase.from('neighborhoods').insert({ name }).select('neighborhood_id').single();
-    return created?.neighborhood_id || null;
-}
-
-async function logPipelineStart() {
-    try {
-        const { data } = await supabase.from('ai_pipeline_log').insert({
-            pipeline_type: 'discovery',
-            status: 'running',
-            started_at: new Date().toISOString()
-        }).select('log_id').single();
-        return data?.log_id;
-    } catch { return null; }
-}
-
-async function logPipelineEnd(logId, status, stats) {
-    if (!logId) return;
-    try {
-        const detailsObj = {
-            ...stats,
-            ai_calls: aiCallCount,
-            console_log: getConsoleLog()
-        };
-        await supabase.from('ai_pipeline_log').update({
-            status,
-            cafes_found: stats.discovered || 0,
-            cafes_verified: (stats.auto_approved || 0) + (stats.pending_review || 0),
-            cafes_failed: stats.rejected || 0,
-            completed_at: new Date().toISOString(),
-            error_message: stats.error || null,
-            details: JSON.stringify(detailsObj)
-        }).eq('log_id', logId);
-    } catch {}
-}
-
-// ════════════════════════════════════════════════════════════════════════════════
-//  CONSOLE CAPTURE — stores all output so it can be saved to the pipeline log
-// ════════════════════════════════════════════════════════════════════════════════
-const _consoleBuffer = [];
-const _origLog = console.log.bind(console);
-const _origErr = console.error.bind(console);
-const _origWarn = console.warn.bind(console);
-
-function captureConsole() {
-    console.log = (...args) => {
-        const line = args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ');
-        _consoleBuffer.push(line);
-        _origLog(...args);
-    };
-    console.error = (...args) => {
-        const line = '[ERROR] ' + args.map(a => typeof a === 'string' ? a : (a?.stack || JSON.stringify(a))).join(' ');
-        _consoleBuffer.push(line);
-        _origErr(...args);
-    };
-    console.warn = (...args) => {
-        const line = '[WARN] ' + args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ');
-        _consoleBuffer.push(line);
-        _origWarn(...args);
-    };
-}
-
-function getConsoleLog() {
-    // Cap at ~50KB to avoid oversized DB writes
-    const full = _consoleBuffer.join('\n');
-    return full.length > 50000 ? full.slice(-50000) : full;
-}
-
-// ════════════════════════════════════════════════════════════════════════════════
-//  MAIN
-// ════════════════════════════════════════════════════════════════════════════════
 async function main() {
     captureConsole();
+
     console.log('='.repeat(60));
     console.log('  SGMakan Cafe Curator v3');
-    console.log('  4-Stage AI Pipeline (rate-limit aware)');
     console.log('='.repeat(60));
-    console.log(`  Date:      ${NOW.toISOString()}`);
+    console.log(`  Date:       ${NOW.toISOString()}`);
     console.log(`  OpenRouter: ${OPENROUTER_API_KEY ? OPENROUTER_MODEL : 'not configured'}`);
-    console.log(`  Groq:      ${GROQ_API_KEY ? `${GROQ_MODEL} (30 RPM, 1K RPD)` : 'not configured'}`);
-    console.log(`  Gemini:    ${GEMINI_API_KEY ? `${GEMINI_MODEL}` : 'not configured'}`);
-    console.log(`  Search:    ${MONTHS_TO_SEARCH.map(m => `${m.month} ${m.year}`).join(', ')}`);
-    console.log(`  Limits:    ${MAX_ARTICLES} max articles, ${AI_MIN_GAP_MS / 1000}s between AI calls`);
+    console.log(`  Groq:       ${GROQ_API_KEY ? GROQ_MODEL : 'not configured'}`);
+    console.log(`  Gemini:     ${GEMINI_API_KEY ? GEMINI_MODEL : 'not configured'}`);
+    console.log(`  Search:     ${MONTHS_TO_SEARCH.map(m => `${m.month} ${m.year}`).join(', ')}`);
+    console.log(`  Limits:     ${MAX_ARTICLES} max articles, ${AI_MIN_GAP_MS / 1000}s between AI calls`);
     console.log('='.repeat(60) + '\n');
 
     if (!SERPER_API_KEY) throw new Error('Missing SERPER_API_KEY');
-    if (!OPENROUTER_API_KEY && !GROQ_API_KEY && !GEMINI_API_KEY) throw new Error('Need at least one AI provider: set OPENROUTER_API_KEY, GROQ_API_KEY, or GEMINI_API_KEY');
+    if (!OPENROUTER_API_KEY && !GROQ_API_KEY && !GEMINI_API_KEY) {
+        throw new Error('Need at least one AI provider: set OPENROUTER_API_KEY, GROQ_API_KEY, or GEMINI_API_KEY');
+    }
 
     const logId = await logPipelineStart();
     const pipelineStats = {};
 
     try {
-        // STAGE 1 — Discover
         const articles = await stage1_discover();
         pipelineStats.articles_found = articles.length;
 
-        // STAGE 2 — Extract
         const candidates = await stage2_extract(articles);
         pipelineStats.discovered = candidates.size;
 
-        // STAGE 3 — Verify
         const existingTitles = await getExistingCafeTitles();
         console.log(`   ${existingTitles.size} existing cafes loaded for dedup\n`);
         const { verified, stats: verifyStats } = await stage3_verify(candidates, existingTitles);
         Object.assign(pipelineStats, verifyStats);
 
-        // STAGE 4 — Enrich & Store
         const storeResults = await stage4_enrich_and_store(verified);
         Object.assign(pipelineStats, storeResults);
 
-        // Log success
         await logPipelineEnd(logId, 'completed', pipelineStats);
 
-        // Final summary
         console.log('='.repeat(60));
         console.log('  Pipeline Complete');
         console.log('='.repeat(60));
@@ -1099,7 +987,6 @@ async function main() {
         console.log(`  Errors:               ${pipelineStats.errors || 0}`);
         console.log(`  Total AI calls:       ${aiCallCount}`);
         console.log('='.repeat(60));
-
     } catch (error) {
         console.error('\nPipeline failed:', error.message);
         await logPipelineEnd(logId, 'failed', { ...pipelineStats, error: error.message });
