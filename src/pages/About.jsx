@@ -64,7 +64,7 @@ function About() {
                 <section className="about-section footer-note">
                     <hr className="divider" />
                     <p>
-                        <em>SGMakan is a living document, continuously updated to reflect the dynamic nature of Singapore's food scene.
+                        <em>SGMakan is a live notebook, continuously updated to reflect the dynamic nature of Singapore's food scene.
                             It is built for the coffee connoisseur, the digital nomad, and the weekend explorer.</em>
                     </p>
                 </section>

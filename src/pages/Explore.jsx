@@ -79,7 +79,7 @@ function Explore() {
         let statusMatch = true;
         if (statusFilter === 'all') statusMatch = true;
         else if (statusFilter === 'favorite') statusMatch = cafe.userStatus === 'Favorite';
-        else if (statusFilter === 'want-to-go') statusMatch = cafe.userStatus === 'Want to go';
+        else if (statusFilter === 'want-to-go') statusMatch = cafe.userStatus === 'Want to go' || cafe.userStatus === null;
         else if (statusFilter === 'visited') statusMatch = cafe.userStatus === 'Visited';
 
         if (!statusMatch) return false;
