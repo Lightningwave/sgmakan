@@ -2,8 +2,6 @@
 -- SGMakan Database Schema v2.1
 -- =====================================================
 
-
-
 -- Drop tables if they exist (for fresh start)
 DROP TABLE IF EXISTS ai_pipeline_log CASCADE;
 DROP TABLE IF EXISTS pending_cafes CASCADE;
