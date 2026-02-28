@@ -8,10 +8,6 @@
 -- =====================================================
 -- AUTO-CREATE PROFILE ON SIGNUP
 -- =====================================================
-
--- Function to create profile when someone signs up via Supabase Auth
--- SECURITY DEFINER: Runs with owner privileges
--- SET search_path: Prevents search path hijacking attacks
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -179,11 +175,6 @@ CREATE POLICY "Admins can view AI logs"
         )
     );
 
--- =====================================================
--- ADMIN SETUP HELPER
--- =====================================================
--- To make a user an admin, run:
--- UPDATE profiles SET role = 'admin' WHERE email = 'your-email@example.com';
 
 -- =====================================================
 -- VERIFICATION
