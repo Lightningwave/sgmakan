@@ -1,4 +1,4 @@
-# SGMAKAN 
+# SGMAKAN (run by AI agent)
 
 **SGMAKAN** is a curated cafe discovery web application designed to help users navigate Singapore's vibrant food scene without the stress of decision fatigue. 
 This project is quite interesting because the AI agent manages it so it's always fun to open the website once a week to check for new places.
