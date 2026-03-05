@@ -1,70 +1,112 @@
-# Getting Started with Create React App
+# SGMAKAN 🇸🇬🍴
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+**SGMAKAN** is a curated cafe discovery web application designed to help users navigate Singapore's vibrant food scene without the stress of decision fatigue. 
 
-## Available Scripts
+**Live Demo:** [https://sgmakan.vercel.app/](https://sgmakan.vercel.app/)
 
-In the project directory, you can run:
+---
 
-### `npm start`
+##  Overview
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+In a city with thousands of dining options, finding the perfect brunch spot often leads to information overload. SGMAKAN simplifies this journey through a minimalist interface, curated recommendations, and AI-powered discovery.
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+### The Problem
+* **Decision Fatigue:** Too many options make choosing a cafe stressful.
+* **Information Overload:** Existing platforms provide excessive, unorganized data.
+* **Social Media Dependency:** Over 50% of Singaporeans rely on social media for discovery, which lacks structured tracking.
 
-### `npm test`
+### Our Solution
+* **Curated Discovery:** A handpicked list of trendy cafes to reduce search time.
+* **Personalized Tracking:** Tools to save "Want to Go," "Visited," and "Favorite" spots.
+* **Minimalist Design:** A clean UI focused on neighborhood-based browsing and essential details.
+* **AI Integration:** An AI-powered "food influencer" to help identify and pipeline new trendy spots.
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+---
 
-### `npm run build`
+##  Target Audience
+* **Students & Young Professionals** in Singapore.
+* **Cafe Enthusiasts** looking for the best brunch and coffee spots.
+* **Explorers** who want a quick, curated way to track their food journey.
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+---
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+##  Features
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+### For Visitors
+* **Curated Listings:** View a refined list of trendy food spots.
+* **Neighborhood Filtering:** Find cafes by specific areas (e.g., Joo Chiat, Tiong Bahru, Lavender).
+* **Advanced Search:** Search by name or specific tags (e.g., "Chill," "Aesthetic").
+* **Detailed Insights:** Access cafe information including ratings, vibes, and price points.
 
-### `npm run eject`
+### For Members
+* **Personal Library:** Mark cafes as *Want to Go*, *Visited*, or *Favorite*.
+* **User Accounts:** Secure email sign-up and login to persist data across sessions.
+* **Dual View Modes:** Toggle between a visual **Gallery Mode** and a data-rich **Tabular Mode**.
 
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
+### For Admins
+* **Management Dashboard:** View platform statistics (total cafes, users, and AI runs).
+* **Content Moderation:** Edit or remove cafe listings to maintain quality.
+* **AI Pipeline:** Approve or reject new cafes discovered by the AI engine.
 
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+---
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
+## 🛠 Project Structure & Milestones
 
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
+### Milestone 1: Foundation
+* Database schema design and implementation.
+* User authentication flow (Sign up/Login).
+* Basic Admin Dashboard access.
 
-## Learn More
+### Milestone 2: Advanced Features
+* Deployment of the **AI Cafe Discovery Pipeline**.
+* Enhanced Cafe Management tools.
+* Detailed Dashboard analytics and AI logs.
 
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
+---
 
-To learn React, check out the [React documentation](https://reactjs.org/).
+##  AI Discovery Pipeline
 
-### Code Splitting
+A core feature of SGMAKAN is its automated discovery engine, which acts as a digital "food influencer" to keep the platform updated with the latest trends.
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
+### Stage 1: DISCOVER (Search)
+The system uses **Serper** to scan trusted food blogs and recent lifestyle articles for new cafe openings and trending brunch spots in Singapore.
 
-### Analyzing the Bundle Size
+### Stage 2: EXTRACT (Identify)
+Raw data from blog snippets is processed by AI to isolate specific cafe names, stripping away noise and irrelevant content.
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
+### Stage 3: VERIFY (Validate)
+To ensure data integrity, the system performs:
+* **Cross-checking:** Validates against Google Places API to confirm the location is active.
+* **Deduplication:** Fuzzy matching against the existing database to prevent double entries.
+* **AI-Judging:** An AI agent determines if the establishment truly fits the "cafe" criteria and is currently operational.
 
-### Making a Progressive Web App
+### Stage 4: ENRICH (Finalize)
+The system performs a final high-context AI call to:
+* **Generate Metadata:** Creates descriptions, identifies "vibes" (e.g., Minimalist, Industrial), assigns tags, and identifies the nearest MRT and neighborhood.
+* **Media Sourcing:** Finds a valid representative image.
+* **Promotion Logic:** * **Auto-Promote:** Complete profiles with high confidence are moved directly to the live `cafes` database.
+* **Review Queue:** Incomplete profiles (missing images or low confidence) are sent to `pending_cafes` for manual Admin approval.
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
+---
 
-### Advanced Configuration
+##  Visual Design
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
+The platform emphasizes a clean, minimalist aesthetic to ensure the focus remains on the food and the experience.
 
-### Deployment
+| View | Description |
+| :--- | :--- |
+| **Gallery Mode** | Visual-first grid focusing on cafe aesthetics and locations. |
+| **Tabular Mode** | Detailed list view featuring MRT proximity, ratings, vibes, and price tags. |
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
+---
 
-### `npm run build` fails to minify
+##  Code Guidelines
+The project follows strict coding standards to ensure maintainability and scalability, including:
+* Standardized naming conventions.
+* Modular component structure.
+* Documented AI pipeline logic.
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+---
+
+##  License
+This project is developed for educational and community discovery purposes. Please refer to the `Terms of Use` and `Privacy Policy` on the live site for more details.

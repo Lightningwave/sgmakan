@@ -8,7 +8,6 @@ function Navbar({ toggleSidebar }) {
     const [showDropdown, setShowDropdown] = useState(false);
     const dropdownRef = useRef(null);
 
-    // Close dropdown on outside click
     useEffect(() => {
         if (!showDropdown) return;
         const handleClickOutside = (e) => {

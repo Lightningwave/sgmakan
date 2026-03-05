@@ -36,7 +36,6 @@ async function withRetry(fn, retries = 2, delay = 500) {
             if (i === retries || !isRetryableError(error)) {
                 throw error;
             }
-            // Wait before retry
             await new Promise(r => setTimeout(r, delay));
         }
     }
@@ -51,7 +50,7 @@ function transformCafe(dbCafe) {
         location: dbCafe.location,
         rating: dbCafe.rating?.toString() || '0',
         price: dbCafe.price,
-        userStatus: null, // merged from favorites table per-user
+        userStatus: null, 
         mrt: dbCafe.mrt,
         vibe: dbCafe.vibe,
         tags: dbCafe.tags || [],
@@ -109,7 +108,7 @@ export async function fetchCafeById(id) {
                 .single();
 
             if (error) {
-                if (error.code === 'PGRST116') return null; // Not found
+                if (error.code === 'PGRST116') return null;
                 throw error;
             }
             return transformCafe(data);
@@ -194,7 +193,7 @@ export async function fetchJournalNote(cafeId) {
         return await withRetry(async () => {
             const { data: { user } } = await supabase.auth.getUser();
             if (!user) {
-                return null; // Not authenticated
+                return null; 
             }
 
             const { data, error } = await supabase
@@ -205,7 +204,7 @@ export async function fetchJournalNote(cafeId) {
                 .single();
 
             if (error) {
-                if (error.code === 'PGRST116') return null; // No favorite found
+                if (error.code === 'PGRST116') return null; 
                 throw error;
             }
             return data?.note || null;

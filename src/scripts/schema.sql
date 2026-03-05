@@ -1,10 +1,6 @@
 -- =====================================================
 -- SGMakan Database Schema v2.1
 -- =====================================================
--- Curated cafe discovery platform with AI integration
--- Clean, Notion-like interface
--- Follows Supabase best practices (UUID as PK, RLS)
--- =====================================================
 
 -- Drop tables if they exist (for fresh start)
 DROP TABLE IF EXISTS ai_pipeline_log CASCADE;
@@ -15,10 +11,9 @@ DROP TABLE IF EXISTS neighborhoods CASCADE;
 DROP TABLE IF EXISTS profiles CASCADE;
 
 -- =====================================================
--- 1. PROFILES TABLE (replaces users)
+-- 1. PROFILES TABLE
 -- =====================================================
--- Following Supabase recommendation: Use auth.users.id as primary key
--- This table extends Supabase Auth with app-specific data
+
 CREATE TABLE profiles (
     profile_id UUID NOT NULL REFERENCES auth.users ON DELETE CASCADE,
     username VARCHAR(128),
@@ -209,7 +204,6 @@ RETURNS TRIGGER AS $$
 BEGIN
     IF NEW.slug IS NULL OR NEW.slug = '' THEN
         NEW.slug = LOWER(REGEXP_REPLACE(NEW.title, '[^a-zA-Z0-9]+', '-', 'g'));
-        -- Remove leading/trailing dashes
         NEW.slug = TRIM(BOTH '-' FROM NEW.slug);
     END IF;
     RETURN NEW;
@@ -220,12 +214,6 @@ CREATE TRIGGER trigger_cafe_slug
 BEFORE INSERT ON cafes
 FOR EACH ROW EXECUTE FUNCTION generate_cafe_slug();
 
--- =====================================================
--- ADMIN USER SETUP
--- =====================================================
--- With Supabase Auth, users are created via signup.
--- To make a user admin, first sign up via the app, then run:
--- UPDATE profiles SET role = 'admin' WHERE email = 'your-email@example.com';
 
 -- =====================================================
 -- VERIFICATION
