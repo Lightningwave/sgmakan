@@ -1,4 +1,4 @@
-# SGMAKAN 🇸🇬🍴
+# SGMAKAN 
 
 **SGMAKAN** is a curated cafe discovery web application designed to help users navigate Singapore's vibrant food scene without the stress of decision fatigue. 
 
@@ -50,7 +50,7 @@ In a city with thousands of dining options, finding the perfect brunch spot ofte
 
 ---
 
-## 🛠 Project Structure & Milestones
+## Project Structure & Milestones
 
 ### Milestone 1: Foundation
 * Database schema design and implementation.
